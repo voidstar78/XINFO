@@ -1,0 +1,20 @@
+<XLI:BASIC.X16,MAIN> Back to main BASIC topics.<CON:0D>
+<CON:0D>
+Random Number Generation Guide<CON:0D>
+------------------------------<CON:0D>
+10 A=RND(0)         <CON:0D>
+20 FOR I=1 TO 10    <CON:0D>
+30 PRINT RND(1)     <CON:0D>
+40 NEXT I           <CON:0D>
+<CON:0D>
+RND(0) initializes the X16 Random Number Generator.<CON:0D>
+RND(-value) Negative values used in RND ...<CON:0D>
+RND(+value) Positive values used in RND ...<CON:0D>
+<CON:0D>
+RND(n) always returns a value between 0.0 and 1.0 and must be assigned to a variable.<CON:0D>
+Example: <CON:9E>A=RND(0)<CON:05><CON:0D>
+<CON:0D>
+To get an integer value from 0 to (N-1), use: INT(<CON:9E>RND(0)*10<CON:05>)<CON:0D>
+To get an integer value from 1 to N, use: INT(<CON:9E>RND(0)*10<CON:05>)+1<CON:0D>
+<CON:0D>
+<XLI:BASIC.X16,MAIN> Back to main BASIC topics.<CON:0D>
