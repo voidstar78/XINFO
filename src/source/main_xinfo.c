@@ -1,7 +1,18 @@
 #include <string.h>        //< memcpy, memset, strlen, strstr, strchr, strcpy
-#include <stdlib.h>        //< Used for itoa, srand and exit
-#include <stdio.h>         //< printf and fopen, fgetc
+#include <stdlib.h>        //< Used for itoa, srand and exit (mostly for exit in this one)
+#include <stdio.h>         //< printf, sscanf and fopen, fgetc
 #include <conio.h>         //< cgetc, gotox/y
+/*
+NOTE: printf is not needed by this code.  Only reason printf is used is as a
+convenient way to show "parsing errors" during input of the .x16 document files.
+i.e. to show the row/column of any parsing issues (like incomplete tokens, etc).
+If we assume those inputs are "perfect" then no error checking is needed.
+However, stdio.h is still needed for file-io stuffs.  But if we remove the printf
+calls, that drops the code size at least 2KB or so.
+
+I do use sscanf once, but only for a hex conversion, should be able to easily replace
+that with a standalone function.  sscanf otherwise is another big waste of code space.
+*/
 
 #define TRUE  1
 #define FALSE 0
@@ -20,24 +31,50 @@
 	__asm__("lda #$0F"); \
 	__asm__("jsr $FFD2");
 
+// "ending" ISO mode = returning to normal PETSCII mode
+#define DISABLE_ISO_MODE \
+	__asm__("lda #$8F"); \
+	__asm__("jsr $FFD2");
+
+// NOTE: GETIN == $FFE4
 unsigned char ch_result;
 #define GETCH_WAIT \
   __asm__("WAITL%s:", __LINE__); \
-  __asm__("JSR GETIN"); \
-  __asm__("CMP #0");   \
-  __asm__("BEQ WAITL%s", __LINE__);  \
-	__asm__("STA %v", ch_result);
+  __asm__("jsr GETIN"); \
+  __asm__("cmp #0");   \
+  __asm__("beq WAITL%s", __LINE__);  \
+  __asm__("sta %v", ch_result);
+// the "cmp" above may not be necessary, but didn't verify that yet.
+// Not using the "blocking" GETCH anyway.
 
 #define GETCH \
-  __asm__("JSR GETIN"); \
-	__asm__("STA %v", ch_result);
+  __asm__("jsr GETIN"); \
+  __asm__("sta %v", ch_result);
 
 #define ERR_NO_ARG -1
 #define ERR_FILE_NOT_FOUND -2
-#define ERR_VISIBILE_WIDTH -3
+#define ERR_VISIBLE_WIDTH -3
 #define ERR_ESCAPE -4
 
+#define KEY_ESC 27
+#define KEY_ENTER 0x0D
+
 #define MAX_LINKS_PER_PAGE 30
+/*
+"link codes" are non-printable characters that are detected during
+physical content output, to help determine the x/y coordinate of where
+that output has "landed" relative to the current screen size.  These
+are embeded markers checked for during physical output, and the array
+position offset is 1:1 related to the index into the link_data array
+defined later.   i.e. the first displayed link is associated with the
+first link_code, and so on.
+
+Normally the first 32 codes of the lower 128 and upper 128 characters
+are non-printable, but PETSCII has some color codes in there.  We
+could probably use some other codes, like $FF.  Anyway, since the codes
+might not be all in a contiguous region, the following array just helps
+identify them.
+*/
 unsigned char link_code[] = {
 	// lower 32
 	0x02,0x03,  //2
@@ -75,6 +112,10 @@ From my own experimental testing with the version of cc65 I had:
   always be a string representing the number of arguments that was passed.
 - argc seems to be initialized properly to also be that number of arguments.
 
+Future ideas of passing arguments:
+- assume some fixed memory region?
+- use some BASIC variables? like FI$ for filename?
+
 */
 
 char goto_tag_str[40];
@@ -89,7 +130,7 @@ void get_screen_resolution()
 	__asm__("jsr $ffed");  // get screen resolution	
 	__asm__("stx %v", res_x);
 	__asm__("sty %v", res_y);
-		
+
 	res_yM1 = res_y - 1;
 	res_xM1 = res_x - 1;
 }
@@ -112,32 +153,40 @@ void get_mouse_textmode()
 	__asm__("ldx #$70");  // where in zeropage to store mouse x/y
 	__asm__("jsr $FF6B");  // mouse_get
 	__asm__("sta %v", mouse_buttons);
-	// NOTE: Reg.X contains mouse wheel info
-	
+	// NOTE: Reg.X contains mouse wheel info (not currently used by XINFO)
+
 	mouse_x = (((unsigned int)PEEK(0x0071) << 8) | (unsigned int)PEEK(0x0070)) >> 3;  // >>3 for /8, textmode 
 	mouse_y = (((unsigned int)PEEK(0x0073) << 8) | (unsigned int)PEEK(0x0072)) >> 3;  // >>3 for /8, textmode 
 }
 
+// This could probably be 256 or so (a couple text mode rows plus provision for non-printable color codes)
+// But we'll eat some RAM and make this a generous 1KB size.
 #define BUFFER_LEN 1024U
 char buffer[BUFFER_LEN];
 unsigned int buffer_idx = 0;
 
-char cmd_stack[100];
+// Token commands during input, like "<CONTROL:"
+char cmd_stack[20];
 unsigned int cmd_stack_idx = 0;
 
-char value_stack[100];
+// Value associated with the token; could be a full link target path plus description, so could get long
+char value_stack[120];
 unsigned int value_stack_idx = 0;
-unsigned char g_i;
-unsigned char g_i2;
-unsigned char g_i3;
+
+unsigned char g_i;   // general purpose loop counter
+unsigned char g_i2;  // general purpose loop counter
+unsigned char g_i3;  // general purpose loop counter
 
 // LT = link type
 #define LT_EXTERNAL 0
 #define LT_TAG 1
 typedef struct
-{	
+{
 	unsigned int link_len;  // length of the "link description" text (not the length of the link_ref)
-	char link_ref[80];
+	// note: we don't have to store the actual link description, since "what we're clicking on" isn't important,
+	// we just need to know "where" to click
+
+	char link_ref[60];  // link_ref can be a full path like "/manuals/good-stuff/longfilename.x16"
 	char link_type;  // 0 = external, 1 = tag
 	unsigned char cursor_x;  // COLUMN
 	unsigned char cursor_y;  // ROW
@@ -147,43 +196,55 @@ unsigned int link_data_idx = 0;
 
 typedef struct
 {
-	char tag_name[40];
+	char tag_name[40];  // arbitrarily allowing in-document tags to be up to 40 characters, but they'd probably be generally short like "TOP"
 	unsigned int offset;
 } Tag_data;
 Tag_data tag_data[MAX_LINKS_PER_PAGE];
 unsigned int tag_data_idx = 0;
 
+/*
+NOTE: The above two pre-allocated arrays start to eat up RAM quickly.
+We could consider putting them in different BANKS, just to learn how that's done from cc65?
+*/
+
 char g_ch;
-unsigned int visible_width = 0;
-unsigned int visible_height = 0;
+unsigned int visible_width = 0;  // accounting for how much of the current text mode row has been used
+unsigned int visible_height = 0; // accounting for how many rows into the current text mode we've drawn on
+// If the thing we're printing (g_ch) is intended to physically displayed, pass 1 to indicate
+// it is visible and (virtually) account for that text mode width being consumed.  Otherwise,
+// if it's a non-printable character (color change, etc) pass 0.
 void VIRTUAL_OUT(int visible)
-{	
-  buffer[buffer_idx] = g_ch;
+{
+	buffer[buffer_idx] = g_ch;
 	++buffer_idx;
 	visible_width += visible;
 }
 
 void PRINT_OUT()
-{	
-  if (goto_tag_str[0] != '\0')
+{
+	if (goto_tag_str[0] != '\0')
 	{
 		return;  // don't actually physically print, we're still in "search for tag" mode
 	}
 
-  if (g_ch == 0x0D)
+	if (g_ch == KEY_ENTER)  // ENTER/RETURN
 	{
-		++visible_height;
+		++visible_height;  // account for how many text-mode rows have been used up (to know when to show the MENU)
 		goto auto_output;
 	}
-	
-  for (g_i2 = 0; g_i2 < MAX_LINKS_PER_PAGE; ++g_i2)
+
+	for (g_i2 = 0; g_i2 < MAX_LINKS_PER_PAGE; ++g_i2)
 	{
-	  if (g_ch == link_code[g_i2])
+		// Understand that this is pretty slow, since it happens for EACH printed output.  
+		// Yep, totally taking the 8MHz for granted here.  At 80x60 full wall of text, this 
+		// starts to get more apparent. Probably some smarter way to handle this.
+		// (I think instead of MAX_LINKS_PER_PAGE we can just loop the current link_data_idx??)
+		if (g_ch == link_code[g_i2])
 		{
 			get_curr_xy();
-		  // store current cursor x/y, to help with link
-		  link_data[g_i2].cursor_x = cursor_x;
-		  link_data[g_i2].cursor_y = cursor_y;			
+			// store current cursor x/y, to help with link clicking later
+			link_data[g_i2].cursor_x = cursor_x;
+			link_data[g_i2].cursor_y = cursor_y;
 			
 			//printf("<%d %d %d>", g_i2, cursor_x, cursor_y);
 			break;
@@ -191,12 +252,14 @@ void PRINT_OUT()
 	}
 	if (g_i2 == MAX_LINKS_PER_PAGE)  // special non-printable link code not found
 	{
-auto_output:		
-	  __asm__("lda %v", g_ch);
-	  __asm__("jsr $FFD2");
+		// go ahead and "physically print" the character being asked to be displayed
+auto_output:
+		__asm__("lda %v", g_ch);
+		__asm__("jsr $FFD2");
 	}
 }
 
+// Used for "parsing help" for when users make some syntax errors in specifying mark-up tokens.
 unsigned int parsed_x = 0;
 unsigned int parsed_y = 1;
 
@@ -205,8 +268,8 @@ char is_visible(int ch)  // i.e. is this character code visible when printed to 
 	char result = FALSE;  // assume no...
 	
 	if (
-	  ((ch >= 0x20) && (ch <= 0x7F))
-	  || ((ch >= 0xA0) && (ch <= 0xFF))		
+		((ch >= 0x20) && (ch <= 0x7F))
+		|| ((ch >= 0xA0) && (ch <= 0xFF))
 	)
 	{
 		result = TRUE;
@@ -215,6 +278,11 @@ char is_visible(int ch)  // i.e. is this character code visible when printed to 
 	return result;
 }
 
+// Assess whether the current row (in whatever the current text mode resolution is) has been filled up.
+// If so, go ahead and print the buffered "virtual content" of that row (including with the non-printable
+// control codes to change colors).   In some cases (like we got an explicit new line early or reached
+// end of file early), we need to just "force" the current buffered output.  In that case, pass "force_remaining" as TRUE,
+// otherwise pass it as FALSE.
 void ASSESS_OUTPUT(char force_remaining)
 {
 	/*
@@ -225,47 +293,49 @@ void ASSESS_OUTPUT(char force_remaining)
 	AAA AAAAAAA AAAA AAA
 	AAAAAAAAAAA AAAAAAAA
 	
-	
-	AAAAAAAAAAAAA AAaAAaAA  (found a wrap w/ controls)	
-	              ^	
+	AAAAAAAAAAAAA AAaAAaAA  (found a wrap w/ non-printable controls contained in the buffer)	
+	              ^
 	
 	*/
 	unsigned int idx_orig;
-	unsigned int tmp_idx;	
+	unsigned int tmp_idx;
 	
 	if (visible_width > res_x)
 	{
+		// We're doing like a 'pre-emptive' word wrap, not a look ahead.  This assessment
+		// should be done during each individual addition to the current row.  If we buffer up beyond
+		// the current row, funny stuff will happen.
 		printf("visible_width too large: %d", visible_width);
-		exit(ERR_VISIBILE_WIDTH);
+		exit(ERR_VISIBLE_WIDTH);
 	}
-		
+
 	if (force_remaining || (visible_width == res_x))  // time to output a line
 	{
 		//printf("printing one line...[%d][%d]\n", force_remaining, buffer_idx);		
 		//for (g_i = 0; g_i < buffer_idx; ++g_i)
 		//{
-		//	printf("%d ", buffer[g_i]);						
+		//	printf("%d ", buffer[g_i]);
 		//}
 		//printf("\n");
-		
-		g_i = buffer_idx;
+
+		g_i = buffer_idx;  // assume we need to output the entire current buffer
 		while (TRUE)
 		{
 			--g_i;
-			
-      if (
-			  (g_i == 0)
+
+			if (
+				(g_i == 0)  // out of buffer content
 				|| (force_remaining != 0)
 			)
-      {
+			{
 				//printf("[1,%d]", buffer_idx);
-  			// just print the entire buffer content as-is (even if there is a space at the front)
-				for (g_i = 0; g_i < buffer_idx; ++g_i)
-			  {
-				  g_ch = buffer[g_i]; PRINT_OUT();
-			  }
-				if (visible_width == res_x) ++visible_height;
-			  buffer_idx = 0;
+				// just print the entire buffer content as-is (even if there is a space at the front)
+				for (g_i = 0; g_i < buffer_idx; ++g_i)  // this is mainly for the "force_remaining" case
+				{
+					g_ch = buffer[g_i]; PRINT_OUT();
+				}
+				if (visible_width == res_x) ++visible_height;  // write clear to the edge of the screen, auto-count as a row
+				buffer_idx = 0;  // flush the buffer to start working on the next row
 				visible_width = 0;
 				break;
 			}
@@ -278,38 +348,38 @@ void ASSESS_OUTPUT(char force_remaining)
 				
 				// output row from the beginning to that detected space position
 				for (g_i = 0; g_i < tmp_idx; ++g_i)
-			  {
-				  g_ch = buffer[g_i]; PRINT_OUT();
-			  }
-        //g_ch = buffer[g_i+1];  PRINT_OUT();				
+				{
+					g_ch = buffer[g_i]; PRINT_OUT();
+				}
+
 				// the space effectively now becomes a newline
-				g_ch = 0x0D;  PRINT_OUT();  
+				g_ch = KEY_ENTER;  PRINT_OUT();   // print_out will detect the KEY_ENTER and count a row being used
 				
 				// now write the remaining content that was past the space (accounting also for non-printables)
-				idx_orig = tmp_idx+1;				
+				idx_orig = tmp_idx+1;
 				visible_width = 0;
 				{
 					// reconstruct a "virtual row" from the prior remaining content from where we wrapped...
 					
 					//printf("[%d,%d]", force_remaining, (buffer_idx-idx_orig));
 					tmp_idx = 0;
-				  for (g_i = idx_orig; g_i < buffer_idx; ++g_i)
-				  {						
-					  visible_width += is_visible(buffer[g_i]);
-					  buffer[tmp_idx] = buffer[g_i];
-					  ++tmp_idx;
-				  }				
-					buffer_idx = tmp_idx;				
+					for (g_i = idx_orig; g_i < buffer_idx; ++g_i)
+					{
+						visible_width += is_visible(buffer[g_i]);
+						buffer[tmp_idx] = buffer[g_i];
+						++tmp_idx;
+					}
+					buffer_idx = tmp_idx;
 					
 					//for (g_i = 0; g_i < buffer_idx; ++g_i)
 					//{
 					//	printf("[%d]", buffer[g_i]);
 					//}
 					//printf("\n");
-				}							  
+				}
 				
 				break;
-			}			
+			}
 		}
 		//exit(-7);
 	}
@@ -327,7 +397,7 @@ void check_for_link_selected()
 		if (mouse_y == link_data[g_i].cursor_y)
 		{
 			if (
-			  (mouse_x >= link_data[g_i].cursor_x)
+				(mouse_x >= link_data[g_i].cursor_x)
 				&& (mouse_x <= (link_data[g_i].cursor_x + link_data[g_i].link_len))
 			)
 			{
@@ -353,6 +423,7 @@ void check_for_link_selected()
 				}
 				else if (link_data[g_i].link_type == LT_EXTERNAL)
 				{
+					// override the first command line argument with this new relative or absolute path, and start all over
 					strcpy(arg1_ptr, link_data[g_i].link_ref);
 					new_file = TRUE;
 					ch_result = ' ';
@@ -373,9 +444,11 @@ void check_for_link_selected()
 #define MENU_ESC 1
 #define MENU_TAG 2
 #define MENU_NEW_FILE 3
-unsigned char handle_pause()
+unsigned char handle_pause()  // "pause" aka "the menu" (intermission between filled up screen pages)
 {
 	printf("%c[menu]%c", 1, 1);  // %c used to output CHAR $01 which is interpreted to reverse fg/bg
+	// TODO: need a smarter way to adjust color of the menu, since reversing it makes it look like a clickable link
+	// if we "force" a color, it could conflict with the current background color.
 
 	ch_result = 0;
 	do
@@ -385,13 +458,13 @@ unsigned char handle_pause()
 		
 		get_mouse_textmode();
 		
-		if ((mouse_buttons & 0x01) == 0x01)
+		if ((mouse_buttons & 0x01) == 0x01)  // yep, biased on left-click!
 		{
 			// check if pressed on a link
 			check_for_link_selected();
-		}		
+		}
 		
-		if (ch_result != 0) break;
+		if (ch_result != 0) break;  // if a link was selected, it "virtually" presses space to proceed (to the linked location)
 		
 		//gotox(8);
 		//printf("%u %u %u ", mouse_x, mouse_y, mouse_buttons);
@@ -399,14 +472,18 @@ unsigned char handle_pause()
 	} while (TRUE);
 	//printf("\r      \r");  // only if not doing the clear screen
 	
-	if (ch_result == 27)
+	if (ch_result == KEY_ESC)
 	{
 		printf("\n");
 		return MENU_ESC;
 	}
 
-	CLRSCR;
-	link_data_idx = 0;  // clear all current links
+	CLRSCR;  //<-- sort of optional; don't really need to reset back to top/left
+	// clear all current links; going to "the next page" is sort of like a total restart,
+	// just we don't adjust the file pointer and just keep reading the file from where we're at.
+	// This way not a lot of RAM is needed to store up or buffer ahead and file content.  But will
+	// make searching for tags pretty inefficient.  Don't expect any huge .x16 files tho.
+	link_data_idx = 0;  
 	tag_data_idx = 0;
 	visible_height = 0;
 	
@@ -433,7 +510,7 @@ void main(int argc, char** argv)
 	FILE* f;		
 	
 	goto_tag_str[0] = '\0';	
-				
+
 	if (argc < 2)
 	{
 		printf("xmanual <topic>.x16\n");
@@ -441,7 +518,7 @@ void main(int argc, char** argv)
 	}
 	
 start_over:	
-	ENABLE_ISO_MODE;	
+	ENABLE_ISO_MODE;
 	get_screen_resolution();
 
 	f = fopen(argv[1], "r");
@@ -548,7 +625,7 @@ start_over:
 						if (strstr(cmd_stack, "con") != 0)
 						{
 							// CONTROL COMMAND
-							sscanf(value_stack, "%X", &int_value);
+							sscanf(value_stack, "%X", &int_value);  //< TBD: Need to replace this. Don't need ALL of sscanf just for a hex conversion.
 							
 							//printf("[%d]\n", int_value);
 							
@@ -690,7 +767,7 @@ start_over:
 				}
 			}
 
-      if (visible_height >= res_yM1)
+			if (visible_height >= res_yM1)
 			{
 				g_i3 = handle_pause();
 				if (g_i3 > 0)
@@ -703,21 +780,23 @@ start_over:
 //				}
 			}
 		}  // end while(TRUE)
-		
+
 early_eof:
-    ASSESS_OUTPUT(TRUE);
+		ASSESS_OUTPUT(TRUE);
 		fclose(f);
+
 		if (g_i3 == MENU_CONTINUE)  // handle a "natural pause" due to end of file
 		{
 			g_i3 = handle_pause();
 		}
 		if (g_i3 == MENU_ESC)
 		{
-      // handle_pause already did a \n if they pressed ESCAPE
+			// handle_pause already did a \n if they pressed ESCAPE
+			DISABLE_ISO_MODE;  //< what if they were in ISO mode themselves already?  and don't really want to clear the screen on exit, TBD...
 			exit(ERR_ESCAPE);
 		}
 		// else MENU_NEW_FILE or MENU_TAG...
-				
+
 		// g_i3 == 2 would be to start tag mode, which we can start over
 		// or end of file was really reached, so automatically just start over
 		g_i3 = MENU_CONTINUE;  //< necessary in case we straight-shot to end of file during next run
@@ -726,6 +805,6 @@ early_eof:
 		//printf("file closed\n");
 	}  // end if (f)
 	
-  
+
 //	printf("end of line.\n");
 }
