@@ -331,8 +331,9 @@ void check_for_link_selected()
 				&& (mouse_x <= (link_data[g_i].cursor_x + link_data[g_i].link_len))
 			)
 			{
-				//gotox(8);
-				//printf("link [%c%s%c]", 0x9E, link_data[g_i].link_ref, 0x05);  // yellow  white				
+				/*
+				gotox(8);
+				printf("link [%c%s%c]", 0x9E, link_data[g_i].link_ref, 0x05);  // yellow  white				
 				do
 				{
 					printf(" ");
@@ -341,7 +342,8 @@ void check_for_link_selected()
 					{
 						break;
 					}
-				} while (TRUE);				
+				} while (TRUE);
+				*/
 				
 				if (link_data[g_i].link_type == LT_TAG)
 				{
@@ -355,6 +357,7 @@ void check_for_link_selected()
 					new_file = TRUE;
 					ch_result = ' ';
 				}
+				// else code bug - unsupported link type
 				
 				break;
 			}
@@ -365,6 +368,7 @@ void check_for_link_selected()
 // Return 0 for normal return 
 // Return 1 for ESC pressed (exit)
 // Return 2 for search for TAG mode enabled
+// Return 3 for request to start over with new file
 #define MENU_CONTINUE 0
 #define MENU_ESC 1
 #define MENU_TAG 2
@@ -400,7 +404,7 @@ unsigned char handle_pause()
 		printf("\n");
 		return MENU_ESC;
 	}
-					
+
 	CLRSCR;
 	link_data_idx = 0;  // clear all current links
 	tag_data_idx = 0;
@@ -563,7 +567,7 @@ start_over:
 								|| (int_value == 0x90)  // black
 								|| ((int_value >= 0x95) && (int_value <= 0x9C))   // brown .. purple
 								|| (int_value == 0x9E)  // yellow
-								|| (int_value == 0x9F)  // cyan							
+								|| (int_value == 0x9F)  // cyan
 								|| (int_value == 0x01)  // REVERSE
 							)
 							{
@@ -573,7 +577,7 @@ start_over:
 							else if (  // some printable control output character
 								is_visible(int_value)
 							)
-							{						
+							{
 								// some printable/visible character (takes screen space)
 								g_ch = int_value;  VIRTUAL_OUT(1);  ASSESS_OUTPUT(FALSE);
 							}
@@ -588,7 +592,7 @@ start_over:
 								goto early_eof;
 							}
 							*chr_ptr = 0;
-														
+
 							strcpy(link_data[link_data_idx].link_ref, value_stack);
 							link_data[link_data_idx].link_type = 0;  // XLINK (external)
 							
@@ -640,7 +644,7 @@ start_over:
 							g_ch = 0x01;  VIRTUAL_OUT(0);  // swap colors
 							
 							link_data[link_data_idx].link_len = (i-1);
-							++link_data_idx;							
+							++link_data_idx;
 						}
 						else if (strstr(cmd_stack, "tag") != 0)
 						{
@@ -697,7 +701,7 @@ start_over:
 //				{
 //					printf("%d %d\n", link_data[g_i].cursor_x, link_data[g_i].cursor_y);
 //				}
-			}				
+			}
 		}  // end while(TRUE)
 		
 early_eof:
@@ -716,7 +720,7 @@ early_eof:
 				
 		// g_i3 == 2 would be to start tag mode, which we can start over
 		// or end of file was really reached, so automatically just start over
-		g_i3 = MENU_CONTINUE;
+		g_i3 = MENU_CONTINUE;  //< necessary in case we straight-shot to end of file during next run
 		goto start_over;
 		
 		//printf("file closed\n");
