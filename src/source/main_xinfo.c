@@ -69,6 +69,7 @@ unsigned char ch_result;
 #define KEY_ENTER 13
 #define CMD_WRAP_TOGGLE 0xFF
 #define CMD_LINE_SEPERATOR 0xFE
+#define CMD_MENU 0xFD
 
 #define MAX_LINKS_PER_PAGE 30
 /*
@@ -258,7 +259,7 @@ void VIRTUAL_OUT(int visible)
 		}
 		for (g_i2 = 0; g_i2 < margin_left; ++g_i2)
 		{
-			__asm__("lda #$20");  // space
+			__asm__("lda #$1D");  // cursor right, avoid overwriting by not using $20 SPACE
 			__asm__("jsr $ffd2");
 		}
 	}
@@ -266,6 +267,21 @@ void VIRTUAL_OUT(int visible)
 	buffer[buffer_idx] = g_ch;
 	++buffer_idx;
 	visible_width += visible;
+}
+
+char is_visible(int ch)  // i.e. is this character code visible when printed to the console? 
+{
+	char result = FALSE;  // assume no...
+	
+	if (
+		((ch >= 0x20) && (ch <= 0x7F))
+		|| ((ch >= 0xA0) && (ch < 0xFD))  // FF = word wrap set, FE = divider line, FD = forced menu
+	)
+	{
+		result = TRUE;
+	}
+	
+	return result;
 }
 
 void PRINT_OUT()
@@ -279,6 +295,7 @@ void PRINT_OUT()
 
 	if (g_ch == KEY_ENTER)  // ENTER/RETURN
 	{
+		word_wrap_mode = TRUE;  // force off at end of line
 		++visible_height;  // account for how many text-mode rows have been used up (to know when to show the MENU)
 		is_new_line = TRUE;
 		goto auto_output;
@@ -290,7 +307,14 @@ void PRINT_OUT()
 		&& (word_wrap_mode == FALSE)
 	)
 	{
-		return;
+		if (is_visible(g_ch) == TRUE)   // no word wrap, just let visible stuff "go off the edge of the screen"
+		{
+			printf(">%c", 0x9D);  // cursor left
+			return;
+		}
+		// else- non-printable characters do color change effects, so we want to be sure to capture the last one of
+		// those so when the text continues it is the expected color
+		goto auto_output;
 	}
 
 	// of all the current links buffered up, search them to see if g_ch is a nonprintable code
@@ -326,25 +350,10 @@ auto_output:
 	{
 		for (g_i2 = 0; g_i2 < margin_left; ++g_i2)
 		{
-			__asm__("lda #$20");  // space
+			__asm__("lda #$1D");  // cursor right, instead of $20 space
 			__asm__("jsr $ffd2");
 		}
 	}
-}
-
-char is_visible(int ch)  // i.e. is this character code visible when printed to the console? 
-{
-	char result = FALSE;  // assume no...
-	
-	if (
-		((ch >= 0x20) && (ch <= 0x7F))
-		|| ((ch >= 0xA0) && (ch < 0xFF))  // FF = word wrap toggle
-	)
-	{
-		result = TRUE;
-	}
-	
-	return result;
 }
 
 // Assess whether the current row (in whatever the current text mode resolution is) has been filled up.
@@ -419,7 +428,7 @@ void ASSESS_OUTPUT(char force_remaining)
 						// manually apply the left margin
 						for (g_i2 = 0; g_i2 < margin_left; ++g_i2)
 						{
-							__asm__("lda #$20");  // space
+							__asm__("lda #$1D");  // cursor right, instead of $20 space
 							__asm__("jsr $ffd2");
 						}
 					}
@@ -532,9 +541,9 @@ void check_for_link_selected()
 	}
 }
 
+static unsigned char temp_buffer[60];
 void show_link_target()
 {
-	unsigned char temp_buffer[80];
 	unsigned char max_len;
 	
 	for (g_i = 0; g_i < link_data_idx; ++g_i)
@@ -556,6 +565,7 @@ void show_link_target()
 					temp_buffer[g_i2] = link_data[g_i].link_ref[g_i2];
 				}
 				temp_buffer[g_i2] = '\0';
+				
 				// note: the temp_buffer is needed just in case the link target is really link (longer than room on the screen to fit)
 				// in that case we just show the first portion of it that would fit in the screen
 				
@@ -623,6 +633,11 @@ unsigned char handle_pause()  // "pause" aka "the menu" (intermission between fi
 			// check if pressed on a link
 			check_for_link_selected();
 		}
+		
+		if ((mouse_buttons & 0x02) == 0x02)  // right click to press SPACE
+		{
+			ch_result = ' ';
+		}
 
 		if (ch_result != 0) break;  // if a link was selected, it "virtually" presses space to proceed (to the linked location)
 
@@ -661,6 +676,8 @@ unsigned char handle_pause()  // "pause" aka "the menu" (intermission between fi
 	return MENU_CONTINUE;
 }
 
+char default_filename[60] = "index.x16\0";
+
 void main(int argc, char** argv)
 {
 	unsigned int i;
@@ -672,14 +689,18 @@ void main(int argc, char** argv)
 
 	goto_tag_str[0] = '\0';  // set to not-doing-tag search
 
-	if (argc < 2)
+	if (
+		(argc < 2)
+	)
 	{
-		printf("xmanual <topic>.x16\n");
-		exit(ERR_NO_ARG);
+		argv[1] = default_filename;;  // default to the index.x16 file  [hopefully cc65 initialized argv sufficiently!]
+		//printf("xmanual <topic>.x16\n");
+		//exit(ERR_NO_ARG);
 	}
 
 	if (argc == 6)
 	{
+		// some filename must be specified in order to override these
 		margin_top = atoi(argv[2]);
 		margin_bottom = atoi(argv[3]);
 		margin_left = atoi(argv[4]);
@@ -814,10 +835,17 @@ start_over:
 								g_ch = int_value;  VIRTUAL_OUT(0);
 								ASSESS_OUTPUT(TRUE);
 							}
-							else if (int_value == CMD_WRAP_TOGGLE)  // word wrap TOGGLE
+							else if (int_value == CMD_WRAP_TOGGLE)  // word wrap disable for this line
 							{
 								// non-printed control character
 								word_wrap_mode = !word_wrap_mode;
+							}
+							else if (int_value == CMD_MENU)  // force menu
+							{
+								// non-printed control character
+								//visible_height = res_yM1;								
+								if (goto_tag_str[0] == '\0') goto forced_menu;
+								// else ignore the FORCE MENU command, since we're searching for a tag
 							}
 							else if (int_value == CMD_LINE_SEPERATOR)
 							{
@@ -963,8 +991,9 @@ start_over:
 
 			if (visible_height >= res_yM1)
 			{
+forced_menu:
 				g_i3 = handle_pause();
-				if (g_i3 > 0)
+				if (g_i3 > 0)  // 0 is a continue, anything else is either a link selection or ESC
 				{
 					goto early_eof;
 				}
