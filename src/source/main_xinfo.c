@@ -67,7 +67,8 @@ unsigned char ch_result;
 
 #define KEY_ESC 27
 #define KEY_ENTER 13
-#define KEY_WRAP_TOGGLE 0xFF
+#define CMD_WRAP_TOGGLE 0xFF
+#define CMD_LINE_SEPERATOR 0xFE
 
 #define MAX_LINKS_PER_PAGE 30
 /*
@@ -813,10 +814,20 @@ start_over:
 								g_ch = int_value;  VIRTUAL_OUT(0);
 								ASSESS_OUTPUT(TRUE);
 							}
-							else if (int_value == KEY_WRAP_TOGGLE)  // word wrap TOGGLE
+							else if (int_value == CMD_WRAP_TOGGLE)  // word wrap TOGGLE
 							{
 								// non-printed control character
 								word_wrap_mode = !word_wrap_mode;
+							}
+							else if (int_value == CMD_LINE_SEPERATOR)
+							{
+								g_i3 = (res_x - visible_width);
+								g_ch = '-';  
+								while (g_i3 > 0)
+								{
+								  VIRTUAL_OUT(1);  ASSESS_OUTPUT(FALSE);
+									--g_i3;
+								}
 							}
 							else if (
 								(int_value == 0x1C)  // red
