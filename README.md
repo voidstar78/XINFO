@@ -9,6 +9,7 @@ As a convention, proposing XINFO file extensions be ".x16".  However, they are n
 # Supported Markup Tokens
 Following a convention similar to HTML, XINFO will use brackets ( < > ) as the token identifier.  But besides that, XINFO has no association with HTML (e.g. no BODY or H header tags, etc.).  XINFO has four tokens:
 
+## CONTROL token
 ```
 <CONTROL:xx>
 or
@@ -41,7 +42,7 @@ FE = Line Break (dashes till end of current line) <-- new feature!
 NOTE: A trick about Line Break -- if you want some spaces in the same row before the line break, toggle word wrap OFF first.  If word-wrap is on, the spaces will be detected as a wrap position and the line break will just end up on the next line.  So to prevent this, turn word wrap off, apply your spaces, then turn wrap back on.  Like this:
 ```<CON:FF>   <CON:FE><CON:FF>```
 
-
+## External Link Token
 ```
 <XLINK:target,title>
 or
@@ -50,7 +51,7 @@ or
 
 Define an external link.  Target can be relative or absolute path (relative to the CWD where XINFO was ran).  "target" is limited to 80 total characters including filename.  "title" is shown in reverse during XINFO runtime, as a left-mouse-clickable hyperlink to the specified target.
 
-
+## Tag Link Token
 ```
 <TLINK:tag,title>
 or
@@ -59,7 +60,7 @@ or
 
 Define a tag link.  This is similar to external link, but the TAG is within the same file that is already opened.  This is typically as a "go back to top" feature, but can also be used to quickly go to various topics within the same file.  "tag" is the name of a specified tag.   "title" is what is shown to users that can be clicked on.
 
-
+## Tag Target Token
 ```
 <TAG:tag>
 ```
