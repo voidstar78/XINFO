@@ -1,3 +1,12 @@
+/*
+voidstar - 2023
+
+- left/right margins
+- top/bottmo margins
+- "block" mode toggle (enable/disable word wrap)
+- show where link is going (like a URL)
+
+*/
 #include <string.h>        //< memcpy, memset, strlen, strstr, strchr, strcpy
 #include <stdlib.h>        //< Used for itoa, srand and exit (mostly for exit in this one)
 #include <stdio.h>         //< printf, sscanf and fopen, fgetc
@@ -57,7 +66,8 @@ unsigned char ch_result;
 #define ERR_ESCAPE -4
 
 #define KEY_ESC 27
-#define KEY_ENTER 0x0D
+#define KEY_ENTER 13
+#define KEY_WRAP_TOGGLE 0xFF
 
 #define MAX_LINKS_PER_PAGE 30
 /*
@@ -118,8 +128,19 @@ Future ideas of passing arguments:
 
 */
 
-char goto_tag_str[40];
-char* arg1_ptr;
+char goto_tag_str[40];  //< populated with search string of a tag link, change 0th element to \0 when done searching
+char* arg1_ptr;  //< override first "command line argument" with new filename when doing external links
+
+// Used for "parsing help" for when users make some syntax errors in specifying mark-up tokens.
+unsigned int parsed_x;
+unsigned int parsed_y;
+
+unsigned char margin_top = 2;
+unsigned char margin_bottom = 2;
+unsigned char margin_left = 2;
+unsigned char margin_right = 2;
+
+unsigned char word_wrap_mode = TRUE;
 
 unsigned char res_x;
 unsigned char res_y;
@@ -130,14 +151,17 @@ void get_screen_resolution()
 	__asm__("jsr $ffed");  // get screen resolution	
 	__asm__("stx %v", res_x);
 	__asm__("sty %v", res_y);
+	
+	res_x -= margin_right;  // induce an artificial margin on the right side of the screen
+	res_y -= margin_bottom;
 
-	res_yM1 = res_y - 1;
+	res_yM1 = res_y - 1;  // important since "last row" reserved for [menu]
 	res_xM1 = res_x - 1;
 }
 
 unsigned char cursor_x;  // COLUMN (0-N)
 unsigned char cursor_y;  // ROW (0-N)
-void get_curr_xy()
+void get_cursor_xy()
 {
 	__asm__("sec");
 	__asm__("jsr $fff0");
@@ -159,8 +183,9 @@ void get_mouse_textmode()
 	mouse_y = (((unsigned int)PEEK(0x0073) << 8) | (unsigned int)PEEK(0x0072)) >> 3;  // >>3 for /8, textmode 
 }
 
-// This could probably be 256 or so (a couple text mode rows plus provision for non-printable color codes)
-// But we'll eat some RAM and make this a generous 1KB size.
+// Input buffer for reading from current file being viewed.  Should have enough room
+// for a couple text mode rows (80x2 worse case) plus provision for non-printable color codes.
+// Eats up some RAM, so keep it "not too large."
 #define BUFFER_LEN 1024U
 char buffer[BUFFER_LEN];
 unsigned int buffer_idx = 0;
@@ -208,13 +233,35 @@ We could consider putting them in different BANKS, just to learn how that's done
 */
 
 char g_ch;
-unsigned int visible_width = 0;  // accounting for how much of the current text mode row has been used
-unsigned int visible_height = 0; // accounting for how many rows into the current text mode we've drawn on
+unsigned int visible_width;  // accounting for how much of the current text mode row has been used
+unsigned int visible_height; // accounting for how many rows into the current text mode we've drawn on
 // If the thing we're printing (g_ch) is intended to physically displayed, pass 1 to indicate
 // it is visible and (virtually) account for that text mode width being consumed.  Otherwise,
 // if it's a non-printable character (color change, etc) pass 0.
 void VIRTUAL_OUT(int visible)
 {
+	// handle special case of the very first output, to apply the top and left margin
+	if (
+	  (visible == 1)
+		&& (visible_width == margin_left)
+		&& (visible_height == 0)
+		&& (margin_top > 0)
+	)
+	{
+		// this will induce visible_height to match the margin_top
+		for (g_i2 = 0; g_i2 < margin_top; ++g_i2)
+		{
+			__asm__("lda #$0D");  // enter
+			__asm__("jsr $ffd2");
+			++visible_height;
+		}
+		for (g_i2 = 0; g_i2 < margin_left; ++g_i2)
+		{
+			__asm__("lda #$20");  // space
+			__asm__("jsr $ffd2");
+		}
+	}
+	
 	buffer[buffer_idx] = g_ch;
 	++buffer_idx;
 	visible_width += visible;
@@ -222,6 +269,8 @@ void VIRTUAL_OUT(int visible)
 
 void PRINT_OUT()
 {
+	unsigned char is_new_line = FALSE;  // assume not a new line
+	
 	if (goto_tag_str[0] != '\0')
 	{
 		return;  // don't actually physically print, we're still in "search for tag" mode
@@ -230,19 +279,31 @@ void PRINT_OUT()
 	if (g_ch == KEY_ENTER)  // ENTER/RETURN
 	{
 		++visible_height;  // account for how many text-mode rows have been used up (to know when to show the MENU)
+		is_new_line = TRUE;
 		goto auto_output;
 	}
+	
+	get_cursor_xy();
+	if (
+		(cursor_x == res_xM1)  // hit "edge" of the screen [res_x already includes right margin]
+		&& (word_wrap_mode == FALSE)
+	)
+	{
+		return;
+	}
 
-	for (g_i2 = 0; g_i2 < MAX_LINKS_PER_PAGE; ++g_i2)
+	// of all the current links buffered up, search them to see if g_ch is a nonprintable code
+	// that corresponds to where we will output the link text.
+	for (g_i2 = 0; g_i2 < link_data_idx; ++g_i2)
 	{
 		// Understand that this is pretty slow, since it happens for EACH printed output.  
 		// Yep, totally taking the 8MHz for granted here.  At 80x60 full wall of text, this 
 		// starts to get more apparent. Probably some smarter way to handle this.
-		// (I think instead of MAX_LINKS_PER_PAGE we can just loop the current link_data_idx??)
+		// But, there probably aren't too links on the current page.
 		if (g_ch == link_code[g_i2])
 		{
-			get_curr_xy();
-			// store current cursor x/y, to help with link clicking later
+			get_cursor_xy();
+			// store current cursor x/y, to help with link-clicking later
 			link_data[g_i2].cursor_x = cursor_x;
 			link_data[g_i2].cursor_y = cursor_y;
 			
@@ -250,18 +311,25 @@ void PRINT_OUT()
 			break;
 		}
 	}
-	if (g_i2 == MAX_LINKS_PER_PAGE)  // special non-printable link code not found
+	if (g_i2 == link_data_idx)  // special non-printable link code not found
 	{
 		// go ahead and "physically print" the character being asked to be displayed
 auto_output:
 		__asm__("lda %v", g_ch);
 		__asm__("jsr $FFD2");
 	}
-}
 
-// Used for "parsing help" for when users make some syntax errors in specifying mark-up tokens.
-unsigned int parsed_x = 0;
-unsigned int parsed_y = 1;
+	if (
+		(is_new_line == TRUE)
+	)
+	{
+		for (g_i2 = 0; g_i2 < margin_left; ++g_i2)
+		{
+			__asm__("lda #$20");  // space
+			__asm__("jsr $ffd2");
+		}
+	}
+}
 
 char is_visible(int ch)  // i.e. is this character code visible when printed to the console? 
 {
@@ -269,7 +337,7 @@ char is_visible(int ch)  // i.e. is this character code visible when printed to 
 	
 	if (
 		((ch >= 0x20) && (ch <= 0x7F))
-		|| ((ch >= 0xA0) && (ch <= 0xFF))
+		|| ((ch >= 0xA0) && (ch < 0xFF))  // FF = word wrap toggle
 	)
 	{
 		result = TRUE;
@@ -309,9 +377,12 @@ void ASSESS_OUTPUT(char force_remaining)
 		exit(ERR_VISIBLE_WIDTH);
 	}
 
-	if (force_remaining || (visible_width == res_x))  // time to output a line
+	if (force_remaining || (visible_width == res_x))  // time to output a line [note: visible_width already includes margin_left distance]
 	{
-		//printf("printing one line...[%d][%d]\n", force_remaining, buffer_idx);		
+
+		//printf("<%d %d %d %d>\n", force_remaining, visible_width, res_x, margin_left);
+
+		//printf("printing one line...[%d][%d]\n", force_remaining, buffer_idx);
 		//for (g_i = 0; g_i < buffer_idx; ++g_i)
 		//{
 		//	printf("%d ", buffer[g_i]);
@@ -324,8 +395,9 @@ void ASSESS_OUTPUT(char force_remaining)
 			--g_i;
 
 			if (
-				(g_i == 0)  // out of buffer content
+				(g_i == 0)  // no suitable word wrap position found
 				|| (force_remaining != 0)
+				|| (word_wrap_mode == FALSE)
 			)
 			{
 				//printf("[1,%d]", buffer_idx);
@@ -334,9 +406,32 @@ void ASSESS_OUTPUT(char force_remaining)
 				{
 					g_ch = buffer[g_i]; PRINT_OUT();
 				}
-				if (visible_width == res_x) ++visible_height;  // write clear to the edge of the screen, auto-count as a row
+
+				get_cursor_xy();
+				if (cursor_x == res_x)  // hit "edge" of the screen [res_x already includes right margin]
+				{  
+					if (margin_right == 0)
+					{
+						// we get a "natural newline" by CMDR-DOS due to hitting the actual physical edge of the text mode screen
+						// that is, the cursor ends up the next line anyway without an actual CR.  Account for this manually...
+						++visible_height;
+						// manually apply the left margin
+						for (g_i2 = 0; g_i2 < margin_left; ++g_i2)
+						{
+							__asm__("lda #$20");  // space
+							__asm__("jsr $ffd2");
+						}
+					}
+					else
+					{
+						// induce a new line by hitting the right side margin
+						g_ch = KEY_ENTER; PRINT_OUT();
+						visible_width = margin_left;
+					}
+				}
+
 				buffer_idx = 0;  // flush the buffer to start working on the next row
-				visible_width = 0;
+				visible_width = margin_left;
 				break;
 			}
 			else if (buffer[g_i] == ' ')
@@ -357,7 +452,7 @@ void ASSESS_OUTPUT(char force_remaining)
 				
 				// now write the remaining content that was past the space (accounting also for non-printables)
 				idx_orig = tmp_idx+1;
-				visible_width = 0;
+				visible_width = margin_left;
 				{
 					// reconstruct a "virtual row" from the prior remaining content from where we wrapped...
 					
@@ -403,11 +498,11 @@ void check_for_link_selected()
 			{
 				/*
 				gotox(8);
-				printf("link [%c%s%c]", 0x9E, link_data[g_i].link_ref, 0x05);  // yellow  white				
+				printf("link [%c%s%c]", 0x9E, link_data[g_i].link_ref, 0x05);  // yellow  white
 				do
 				{
 					printf(" ");
-					get_curr_xy();
+					get_cursor_xy();
 					if (cursor_x == (res_xM1))
 					{
 						break;
@@ -419,20 +514,82 @@ void check_for_link_selected()
 				{
 					// enable search for tag mode
 					strcpy(goto_tag_str, link_data[g_i].link_ref);
-					ch_result = ' ';
+					ch_result = ' ';  // induce pressing space to proceed from the pause/menu
 				}
 				else if (link_data[g_i].link_type == LT_EXTERNAL)
 				{
 					// override the first command line argument with this new relative or absolute path, and start all over
 					strcpy(arg1_ptr, link_data[g_i].link_ref);
-					new_file = TRUE;
-					ch_result = ' ';
+					new_file = TRUE;  // set flag that we're switching to a new file (note: didn't verify file exists yet)
+					ch_result = ' ';  // induce pressing space to proceed from the pause/menu
 				}
 				// else code bug - unsupported link type
 				
 				break;
 			}
 		}
+	}
+}
+
+void show_link_target()
+{
+	unsigned char temp_buffer[80];
+	unsigned char max_len;
+	
+	for (g_i = 0; g_i < link_data_idx; ++g_i)
+	{
+		if (mouse_y == link_data[g_i].cursor_y)
+		{
+			if (
+				(mouse_x >= link_data[g_i].cursor_x)
+				&& (mouse_x <= (link_data[g_i].cursor_x + link_data[g_i].link_len))
+			)
+			{
+				// show current link "path"
+				gotox(6+margin_left);  // move past "[menu]"
+				
+				get_cursor_xy();
+				max_len = res_xM1 - cursor_x - 2;  // - 2 is just so we don't write the link target reminder all the way to end of screen
+				for (g_i2 = 0; g_i2 < max_len; ++g_i2)
+				{
+					temp_buffer[g_i2] = link_data[g_i].link_ref[g_i2];
+				}
+				temp_buffer[g_i2] = '\0';
+				// note: the temp_buffer is needed just in case the link target is really link (longer than room on the screen to fit)
+				// in that case we just show the first portion of it that would fit in the screen
+				
+				printf("[%c%s%c]", 0x9E, temp_buffer, 0x05);  // yellow  white
+				// tbd: instead of white, we probably need to resume/revert to whatever the color was...
+				
+				// erase to the end of line (in case switching to showing shorter link)
+				do
+				{
+					get_cursor_xy();
+					if (cursor_x >= res_xM1)
+					{
+						break;
+					}
+					printf(" ");
+				} while (TRUE);
+				
+				break;
+			}
+		}
+	}
+	if (g_i == link_data_idx)  // no link within the mouse x/y cursor
+	{
+		gotox(6+margin_left);  // move past "[menu]"
+		
+		// erase to the end of line
+		do
+		{
+			get_cursor_xy();
+			if (cursor_x >= res_xM1)
+			{
+				break;
+			}
+			printf(" ");
+		} while (TRUE);
 	}
 }
 
@@ -446,7 +603,8 @@ void check_for_link_selected()
 #define MENU_NEW_FILE 3
 unsigned char handle_pause()  // "pause" aka "the menu" (intermission between filled up screen pages)
 {
-	printf("%c[menu]%c", 1, 1);  // %c used to output CHAR $01 which is interpreted to reverse fg/bg
+	gotox(margin_left);
+	printf("%c%c[menu]%c%c", 0x9C, 1, 1, 5);  // %c used to output CHAR $01 which is interpreted to reverse fg/bg (9c = purple, 5=white)
 	// TODO: need a smarter way to adjust color of the menu, since reversing it makes it look like a clickable link
 	// if we "force" a color, it could conflict with the current background color.
 
@@ -455,17 +613,18 @@ unsigned char handle_pause()  // "pause" aka "the menu" (intermission between fi
 	{
 		GETCH;
 		if (ch_result != 0) break;
-		
+
 		get_mouse_textmode();
-		
+		show_link_target();
+
 		if ((mouse_buttons & 0x01) == 0x01)  // yep, biased on left-click!
 		{
 			// check if pressed on a link
 			check_for_link_selected();
 		}
-		
+
 		if (ch_result != 0) break;  // if a link was selected, it "virtually" presses space to proceed (to the linked location)
-		
+
 		//gotox(8);
 		//printf("%u %u %u ", mouse_x, mouse_y, mouse_buttons);
 		
@@ -478,7 +637,7 @@ unsigned char handle_pause()  // "pause" aka "the menu" (intermission between fi
 		return MENU_ESC;
 	}
 
-	CLRSCR;  //<-- sort of optional; don't really need to reset back to top/left
+	CLRSCR;
 	// clear all current links; going to "the next page" is sort of like a total restart,
 	// just we don't adjust the file pointer and just keep reading the file from where we're at.
 	// This way not a lot of RAM is needed to store up or buffer ahead and file content.  But will
@@ -486,7 +645,8 @@ unsigned char handle_pause()  // "pause" aka "the menu" (intermission between fi
 	link_data_idx = 0;  
 	tag_data_idx = 0;
 	visible_height = 0;
-	
+	visible_width = margin_left;
+
 	if (goto_tag_str[0] != '\0')
 	{
 		return MENU_TAG;
@@ -507,16 +667,24 @@ void main(int argc, char** argv)
 	int in_ch;
 	int int_value;
 	char* chr_ptr;
-	FILE* f;		
-	
-	goto_tag_str[0] = '\0';	
+	FILE* f;
+
+	goto_tag_str[0] = '\0';  // set to not-doing-tag search
 
 	if (argc < 2)
 	{
 		printf("xmanual <topic>.x16\n");
 		exit(ERR_NO_ARG);
 	}
-	
+
+	if (argc == 6)
+	{
+		margin_top = atoi(argv[2]);
+		margin_bottom = atoi(argv[3]);
+		margin_left = atoi(argv[4]);
+		margin_right = atoi(argv[5]);
+	}
+
 start_over:	
 	ENABLE_ISO_MODE;
 	get_screen_resolution();
@@ -532,6 +700,12 @@ start_over:
 	
 	if (f)
 	{
+		parsed_x = 0;
+		parsed_y = 1;
+
+		visible_width = margin_left;
+		visible_height = 0;
+
 		while (TRUE)
 		{
 			in_ch = fgetc(f);  ++parsed_x;  ++file_idx;
@@ -558,13 +732,13 @@ start_over:
 					if (feof(f))
 					{
 						goto early_eof;
-					}				
+					}
 					if (in_ch != ' ')
-					{					
+					{
 						break;
 					}
-					// skip whitespace here				
-				}			
+					// skip whitespace here
+				}
 				
 				// See if a "double token marker" is present...
 				if (in_ch == '<')  // should be "<<" case
@@ -584,7 +758,7 @@ start_over:
 						{
 							printf("eof before parsed end of command token (l%d, c%d)\n", parsed_y, parsed_x);
 							goto early_eof;
-						}					
+						}
 					} 
 					while ((in_ch >= 'a') & (in_ch <= 'z'));
 					cmd_stack[cmd_stack_idx] = 0;
@@ -602,6 +776,10 @@ start_over:
 							}
 							if (in_ch == ' ')
 							{
+								// this allows whitespaces in the link target to make the input file alignment look
+								// nicer and easier to align menu-like text, but for our purposes all spaces are ignored
+								// in the link and tag targets.   This may end up confusing users, but that's how it is
+								// for now.
 								in_ch = '\0';
 								//printf("link desc may not contain space (l%d, c%d)\n", parsed_y, parsed_x);
 								//goto early_eof;
@@ -629,15 +807,20 @@ start_over:
 							
 							//printf("[%d]\n", int_value);
 							
-							if (int_value == 0x0D)
+							if (int_value == KEY_ENTER)
 							{
-								// RETURN								
+								// RETURN
 								g_ch = int_value;  VIRTUAL_OUT(0);
 								ASSESS_OUTPUT(TRUE);
 							}
+							else if (int_value == KEY_WRAP_TOGGLE)  // word wrap TOGGLE
+							{
+								// non-printed control character
+								word_wrap_mode = !word_wrap_mode;
+							}
 							else if (
 								(int_value == 0x1C)  // red
-								|| (int_value == 0x05)  // green
+								|| (int_value == 0x05)  // white
 								|| (int_value == 0x1E)  // green
 								|| (int_value == 0x1F)  // blue
 								|| (int_value == 0x81)  // orange
@@ -659,7 +842,7 @@ start_over:
 								g_ch = int_value;  VIRTUAL_OUT(1);  ASSESS_OUTPUT(FALSE);
 							}
 						}
-						else if (strstr(cmd_stack, "xli") != 0)
+						else if ((strstr(cmd_stack, "xli") != 0) && (goto_tag_str[0] == '\0'))
 						{
 							// external link command
 							chr_ptr = strchr(value_stack, ',');
@@ -671,7 +854,7 @@ start_over:
 							*chr_ptr = 0;
 
 							strcpy(link_data[link_data_idx].link_ref, value_stack);
-							link_data[link_data_idx].link_type = 0;  // XLINK (external)
+							link_data[link_data_idx].link_type = LT_EXTERNAL;  // XLINK (external)
 							
 							g_ch = 0x01;  VIRTUAL_OUT(0);  // swap colors
 							g_ch = link_code[link_data_idx];  VIRTUAL_OUT(0);  // use a non-printable character as a marker for start of an external link
@@ -691,7 +874,7 @@ start_over:
 							link_data[link_data_idx].link_len = (i-1);
 							++link_data_idx;
 						}
-						else if (strstr(cmd_stack, "tli") != 0)
+						else if ((strstr(cmd_stack, "tli") != 0) && (goto_tag_str[0] == '\0'))
 						{
 							// tag link command
 							chr_ptr = strchr(value_stack, ',');
@@ -699,11 +882,11 @@ start_over:
 							{
 								printf("tlink missing command for link description (l%d, c%d)\n", parsed_y, parsed_x);
 								goto early_eof;
-							}							
+							}
 							*chr_ptr = 0;
-														
+
 							strcpy(link_data[link_data_idx].link_ref, value_stack);
-							link_data[link_data_idx].link_type = 1;						
+							link_data[link_data_idx].link_type = LT_TAG;
 							
 							g_ch = 0x01;  VIRTUAL_OUT(0);  // swap colors
 							g_ch = link_code[link_data_idx];  VIRTUAL_OUT(0);  // use a non-printable character as a marker for start of a tag link
