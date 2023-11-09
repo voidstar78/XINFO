@@ -1,4 +1,4 @@
-XINFO for the Commander X16
+**XINFO** for the Commander X16
 Public Domain - by v* Nov 2023
 
 As a convention, proposing XINFO file extensions be .X16
@@ -12,6 +12,7 @@ Supported markup tokens:
 xx is a two character hex value that corresponds to the PETSCII codes as presented here:  https://sta.c64.org/cbm64pet.html
 Only a few codes are supported, mainly ENTER and FOREGROUND COLOR changes:
 0D = ENTER/RETURN
+FF = Toggle word wrap mode  <-- new feature!
 05 = WHITE
 1C = RED
 1E = GREEN
@@ -34,16 +35,14 @@ Only a few codes are supported, mainly ENTER and FOREGROUND COLOR changes:
 <XLINK:target,title>
 <XLI:target,title>
 
-External link.  Target can be relative or absolute path (relative to the CWD where XINFO was ran).  Linked to 80 total characters including filename.
-
-Title is shown in reverse during XINFO runtime, as a left-mouse-clickable hyperlink to the specified target.
+Define an external link.  Target can be relative or absolute path (relative to the CWD where XINFO was ran).  "target" is limited to 80 total characters including filename.  "title" is shown in reverse during XINFO runtime, as a left-mouse-clickable hyperlink to the specified target.
 
 
 
 <TLINK:tag,title>
 <TLI:tag,title>
 
-Tag link.  This is similar to external link, but the TAG must be within the same file that is already opened.  This is typically as a "go back to top" feature, but can also be used to quickly go to various topics within the same file.  Tag is the name of a specified tag.   Title is what is shown to users that can be clicked on.
+Define a tag link.  This is similar to external link, but the TAG is within the same file that is already opened.  This is typically as a "go back to top" feature, but can also be used to quickly go to various topics within the same file.  "tag" is the name of a specified tag.   "title" is what is shown to users that can be clicked on.
 
 
 
@@ -60,7 +59,7 @@ To bound the RAM usage, XINFO does not open the entire specified file at once.  
 - Tag target can be up to 40 characters
 - External link targets can be to 80 characters
 
-"visible" links is confusing.  If the user is using 80x60 they can have more links visible at a time than at smaller resolutions.  You'll need to arrange the .X16 content such that, in the worse case at 80x60, only 30 links can be presented at a time.  Each link counts, even if they go to the same target.
+"visible" links is confusing.  If the user is using 80x60 they can have more links visible at a time than at smaller resolutions.  You'll need to arrange the .X16 content such that, in the worse case at 80x60, only 30 links can be presented at a time on the same page.  Each link counts, even if they go to the same target.
 
-This is all adjustable in the .c source code, just depends on how much RAM to be reserved upfront.
+This is all adjustable in the .c source code, just depends on how much RAM to be reserved upfront.  To keep code compact, so far avoiding using malloc and just using fixed size pre-allocated arrays.
 
