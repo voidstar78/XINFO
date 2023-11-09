@@ -20,8 +20,11 @@ xx is a two character hex value that corresponds to the PETSCII codes as present
 Only a few codes are supported, mainly ENTER and FOREGROUND COLOR changes:
 ```
 0D = ENTER/RETURN
-FF = Toggle word wrap mode  <-- new feature!
-FE = Line Break (dashes till end of current line) <-- new feature!
+
+FF = Enable word wrap mode for the current row (i.e. until code 0D is encountered)
+FE = Line Break (dashes till end of current line) 
+FD = Force Menu (causes the MENU to appear where this control token appears; will be ignored when linking to a tag; intent is to help "pause" at major content and more politely navigate to tags)
+
 05 = WHITE
 1C = RED
 1E = GREEN
