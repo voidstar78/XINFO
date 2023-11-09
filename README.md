@@ -20,6 +20,7 @@ Only a few codes are supported, mainly ENTER and FOREGROUND COLOR changes:
 ```
 0D = ENTER/RETURN
 FF = Toggle word wrap mode  <-- new feature!
+FE = Line Break (dashes till end of current line) <-- new feature!
 05 = WHITE
 1C = RED
 1E = GREEN
@@ -37,6 +38,9 @@ FF = Toggle word wrap mode  <-- new feature!
 9E = YELLOW
 9F = CYAN
 ```
+NOTE: A trick about Line Break -- if you want some spaces in the same row before the line break, toggle word wrap OFF first.  If word-wrap is on, the spaces will be detected as a wrap position and the line break will just end up on the next line.  So to prevent this, turn word wrap off, apply your spaces, then turn wrap back on.  Like this:
+```<CON:FF>   <CON:FE><CON:FF>```
+
 
 ```
 <XLINK:target,title>
