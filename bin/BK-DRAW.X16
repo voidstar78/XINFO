@@ -1,7 +1,7 @@
 <XLI:BASIC.X16,MAIN> Back to main BASIC topics.<CON:0D>
 <CON:0D>
 The most common drawing mode in X16 BASIC will be SCREEN $80. This mode supports graphic drawing with an overlay of text mode characters.<CON:0D>
-<CON:0D>
+<CON:0D><CON:FF>
 10 SCREEN $80<CON:0D>
 20 RECT 0,0,319,239,0:REM FILL SCREEN WITH BLACK BACKGROUND<CON:0D>
 30 RECT 50,15,65,80,3:REM DRAW A CYAN RECT<CON:0D>
@@ -18,5 +18,5 @@ The most common drawing mode in X16 BASIC will be SCREEN $80. This mode supports
 160 NEXT<CON:0D>
 200 LOCATE 20,1
 210 PRINT "END OF PROGRAM"
-<CON:0D>
+<CON:FF><CON:0D>
 <XLI:BASIC.X16,MAIN> Back to main BASIC topics.<CON:0D>

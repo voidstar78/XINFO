@@ -6,10 +6,10 @@ Commander X16 BASIC Manual<CON:0D>
 <CON:0D>
 BASIC KEYWORDS (GROUP A)<CON:0D>
 ==============<CON:0D>
-<TLI:BK-ABS,    ABS>     Absolute Value<CON:0D>
-<TLI:BK-AND,    AND>     Boolean or Bitwise AND<CON:0D>
-<TLI:BK-ASC,    ASC>     Get PETSCII Value<CON:0D>
-<TLI:BK-ATN,    ATN>     Arctangent<CON:0D>
+<TLI:BK-ABS,ABS> Absolute Value<CON:0D>
+<TLI:BK-AND,AND> Boolean or Bitwise AND<CON:0D>
+<TLI:BK-ASC,ASC> Get PETSCII Value<CON:0D>
+<TLI:BK-ATN,ATN> Arctangent<CON:0D>
 
 <CON:0D>
 <CON:0D>
