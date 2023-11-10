@@ -21,7 +21,7 @@ Only a few codes are supported, mainly ENTER and FOREGROUND COLOR changes:
 ```
 0D = ENTER/RETURN
 
-FF = Enable word wrap mode for the current row (i.e. until code 0D is encountered)
+FF = Disable word wrap mode for the current row (i.e. until code 0D is encountered, then word wrap is enabled back on)
 FE = Line Break (dashes till end of current line) 
 FD = Force Menu (causes the MENU to appear where this control token appears; will be ignored when linking to a tag; intent is to help "pause" at major content and more politely navigate to tags)
 
