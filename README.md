@@ -22,7 +22,7 @@ Only a few codes are supported, mainly ENTER and FOREGROUND COLOR changes:
 0D = ENTER/RETURN
 
 FF = Disable word wrap mode for the current row (i.e. until code 0D is encountered, then word wrap is enabled back on)
-FE = Line Break (dashes till end of current line) 
+FE = Line Divider (dashes till end of current line) 
 FD = Force Menu (causes the MENU to appear where this control token appears; will be ignored when linking to a tag; intent is to help "pause" at major content and more politely navigate to tags)
 
 05 = WHITE
@@ -42,7 +42,7 @@ FD = Force Menu (causes the MENU to appear where this control token appears; wil
 9E = YELLOW
 9F = CYAN
 ```
-NOTE: A trick about Line Break -- if you want some spaces in the same row before the line break, toggle word wrap OFF first.  If word-wrap is on, the spaces will be detected as a wrap position and the line break will just end up on the next line.  So to prevent this, turn word wrap off, apply your spaces, then turn wrap back on.  Like this:
+NOTE: A trick about Line Divider -- if you want some spaces in the same row before the line break, toggle word wrap OFF first.  If word-wrap is on, the spaces will be detected as a wrap position and the line break will just end up on the next line.  So to prevent this, turn word wrap off, apply your spaces, then turn wrap back on.  Like this:
 ```<CON:FF>   <CON:FE><CON:FF>```
 
 ## External Link Token
