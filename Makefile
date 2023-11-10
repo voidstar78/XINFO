@@ -18,18 +18,18 @@ all: $(PROG)
 
 $(PROG): $(MAIN)
 	$(COMPILER6502) $(CCFLAGS) -o $(PROG) $(MAIN)
-	mv $(PROG) bin/
+	mv $(PROG) bin/START/
 
 run: all
-	(cd bin; x16emu -prg $(PROG) -scale 2 -debug)
+	(cd bin/START/; x16emu -prg $(PROG) -scale 2 -debug)
 
 $(ZIPFILE): all
-	(cd bin; zip ../$(ZIPFILE) *)
+	(cd bin/START/; zip ../../$(ZIPFILE) *)
 
 zip: $(ZIPFILE)
 
 clean:
-	rm -f bin/$(PROG) \
+	rm -f bin/START/$(PROG) \
 	rm -f $(ZIPFILE)
 	
 
