@@ -86,11 +86,14 @@ LOAD "XINFO.PRG"
 RUN:REM TUTORIAL.X16 0 0 0 0
 ```
 
-The margin arguments are <top> <bottom> <left> <right>.  For example, top run with top margin of 5 spaces, bottom margin of 4 spaces, left margin of 3 spaces, right margin of 2 spaces, run XINFO like this:
+The margin arguments are in the order [top] [bottom] [left] [right].  For example, to run with top margin of 5 spaces, bottom margin of 4 spaces, left margin of 3 spaces, right margin of 2 spaces, run XINFO like this:
 ```
 LOAD "XINFO.PRG"
 RUN:REM TUTORIAL.X16 5 4 3 2
 ```
+
+If no filename is specified, XINFO will look for **INDEX.X16** by default
+
 
 # XINFO Usage
 XINFO will read the specified input file.  When it has buffered up "one row worth of displayable text" it will output that row, applying any non-visible CONTROL codes along the way (color changes).  It will also word wrap as appropriate to the current screen text-mode size (unless word-wrap with signaled as OFF).   The typical \n or \n\r in the input file do not matter - they are treated as non-printable characters and not shown.  You can only newline in XINFO by specifying <CON:0D>
