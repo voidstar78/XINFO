@@ -4,7 +4,7 @@ Public Domain - by v* Nov 2023
 # Introduction
 XINFO is a text mode "mark up document viewer" for the Commander X16.  The colorized mark-up can work for any system that uses the PETSCII color code assignments (as described in https://sta.c64.org/cbm64pet.html ).  However, what makes XINFO specific to the X16 is that it has mouse-enabled hyperlink support.  This relies on a KERNAL call that is specific to the X16 system (to query for mouse coordinates while in text mode).
 
-As a convention, proposing XINFO file extensions be ".x16".  However, they are normal text files that can be edited with X16EDIT, notepad++, etc.  XINFO will enable the X16 ISO mode when it is started, allowing use of braces ( { } ) and other "normal characters" when creating content from a modern PC.  ISO mode is exited when you press ESCAPE and exit XINFO.
+As a convention, proposing XINFO file extensions be ".nfo".  However, they are normal text files that can be edited with X16EDIT, notepad++, etc.  XINFO will enable the X16 ISO mode when it is started, allowing use of braces ( { } ) and other "normal characters" when creating content from a modern PC.  ISO mode is exited when you press ESCAPE and exit XINFO.
 
 # Supported Markup Tokens
 Following a convention similar to HTML, XINFO will use brackets ( < > ) as the token identifier.  But besides that, XINFO has no association with HTML (e.g. no BODY or H header tags, etc.).  XINFO has four tokens:
@@ -77,22 +77,22 @@ XINFO was developed using cc65, a C-compiler for 6502-based systems.  As a conve
 Run XINFO with default margins on all sides set to 2:
 ```
 LOAD "XINFO.PRG"
-RUN:REM EXAMPLE.X16
+RUN:REM EXAMPLE.NFO
 ```
 
 Run XINFO with no margins:
 ```
 LOAD "XINFO.PRG"
-RUN:REM TUTORIAL.X16 0 0 0 0
+RUN:REM TUTORIAL.NFO 0 0 0 0
 ```
 
 The margin arguments are in the order [top] [bottom] [left] [right].  For example, to run with top margin of 5 spaces, bottom margin of 4 spaces, left margin of 3 spaces, right margin of 2 spaces, run XINFO like this:
 ```
 LOAD "XINFO.PRG"
-RUN:REM TUTORIAL.X16 5 4 3 2
+RUN:REM TUTORIAL.NFO 5 4 3 2
 ```
 
-If no filename is specified, XINFO will look for **INDEX.X16** by default
+If no filename is specified, XINFO will look for **INDEX.NFO** by default
 
 
 # XINFO Usage
@@ -114,7 +114,7 @@ To bound the RAM usage, XINFO does not open the entire specified file at once.  
 
 This is all adjustable in the .c source code, just depends on how much RAM to be reserved upfront.  To keep code compact, so far avoiding using malloc and just using fixed size pre-allocated arrays.
 
-Since "visible" links is confusing, here is a little explanation:  If the user is using 80x60 they can have more links visible at a time than at smaller resolutions.  You'll need to arrange the .X16 content such that, in the worse case at 80x60, only 30 links can be presented at a time on the same page.  Each link counts, even if they go to the same target.  To make things easier, I'd just suggest the following: only do up to 30 links per file.  If you need more then that, break the content up into multiple files.  But the point here it is not really a per-file limit, but a "per what the user see's on the screen" limit (so you can technically go around the 30-link per file limit by having huge gaps in the content, but that's silly- just go with multiple files).
+Since "visible" links is confusing, here is a little explanation:  If the user is using 80x60 they can have more links visible at a time than at smaller resolutions.  You'll need to arrange the .NFO content such that, in the worse case at 80x60, only 30 links can be presented at a time on the same page.  Each link counts, even if they go to the same target.  To make things easier, I'd just suggest the following: only do up to 30 links per file.  If you need more then that, break the content up into multiple files.  But the point here it is not really a per-file limit, but a "per what the user see's on the screen" limit (so you can technically go around the 30-link per file limit by having huge gaps in the content, but that's silly- just go with multiple files).
 
 Another limitation is that after a cc65-built program runs once, you can't run it again until you re-load it.  So for now, when you exit from XINFO, you must do LOAD "XINFO.PRG" again before running it again.
 
