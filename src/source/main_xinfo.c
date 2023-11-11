@@ -10,10 +10,11 @@ voidstar - 2023
 #include <string.h>        //< memcpy, memset, strlen, strstr, strchr, strcpy
 #include <stdlib.h>        //< Used for itoa, srand and exit (mostly for exit in this one)
 #include <stdio.h>         //< printf, sscanf and fopen, fgetc
-#include <conio.h>         //< cgetc, gotox/y
+#include <conio.h>         //< cgetc, gotox/y, cbm_open, cbm_close
+
 /*
 NOTE: printf is not needed by this code.  Only reason printf is used is as a
-convenient way to show "parsing errors" during input of the .x16 document files.
+convenient way to show "parsing errors" during input of the .nfo document files.
 i.e. to show the row/column of any parsing issues (like incomplete tokens, etc).
 If we assume those inputs are "perfect" then no error checking is needed.
 However, stdio.h is still needed for file-io stuffs.  But if we remove the printf
@@ -64,10 +65,11 @@ unsigned char ch_result;
 #define ERR_FILE_NOT_FOUND -2
 #define ERR_VISIBLE_WIDTH -3
 #define ERR_ESCAPE -4
+#define ERR_FILE_ISSUE -5
 
 #define KEY_ESC 27
 #define KEY_ENTER 13
-#define CMD_WRAP_TOGGLE 0xFF
+#define CMD_WRAP_OFF 0xFF
 #define CMD_LINE_SEPERATOR 0xFE
 #define CMD_MENU 0xFD
 
@@ -142,7 +144,7 @@ unsigned char margin_bottom = 2;
 unsigned char margin_left = 2;
 unsigned char margin_right = 2;
 
-unsigned char word_wrap_mode = TRUE;
+unsigned char word_wrap_mode;
 
 unsigned char res_x;
 unsigned char res_y;
@@ -171,9 +173,9 @@ void get_cursor_xy()
 	__asm__("sty %v", cursor_x);  // set the COLUMN
 }
 
-unsigned int mouse_x;  // column (0-N)
-unsigned int mouse_y;  // row (0-N)
-unsigned char mouse_buttons;
+unsigned int mouse_x = 0;  // column (0-N)
+unsigned int mouse_y = 0;  // row (0-N)
+unsigned char mouse_buttons = 0;
 void get_mouse_textmode()
 {
 	__asm__("ldx #$70");  // where in zeropage to store mouse x/y
@@ -200,9 +202,15 @@ unsigned int cmd_stack_idx = 0;
 char value_stack[120];
 unsigned int value_stack_idx = 0;
 
-unsigned char g_i;   // general purpose loop counter
-unsigned char g_i2;  // general purpose loop counter
-unsigned char g_i3;  // general purpose loop counter
+unsigned char g_i;		// general purpose loop counter
+unsigned char g_i2;		// general purpose loop counter
+unsigned char g_i3;		// general purpose loop counter
+
+unsigned char g_f;							// current file result (cbm_open result)
+unsigned char n_fn = 1;					// file number to be used by cbm_open
+unsigned char n_device = 8;			// device number to be used by cbm_open
+unsigned char n_sec_addr = 6;		// channel or secondary address to be used by cbm_open
+unsigned char g_eof;						// global "end of file" indicator
 
 // LT = link type
 #define LT_EXTERNAL 0
@@ -213,7 +221,7 @@ typedef struct
 	// note: we don't have to store the actual link description, since "what we're clicking on" isn't important,
 	// we just need to know "where" to click
 
-	char link_ref[60];  // link_ref can be a full path like "/manuals/good-stuff/longfilename.x16"
+	char link_ref[60];  // link_ref can be a full path like "/manuals/good-stuff/longfilename.nfo"
 	char link_type;  // 0 = external, 1 = tag
 	unsigned char cursor_x;  // COLUMN
 	unsigned char cursor_y;  // ROW
@@ -234,7 +242,7 @@ NOTE: The above two pre-allocated arrays start to eat up RAM quickly.
 We could consider putting them in different BANKS, just to learn how that's done from cc65?
 */
 
-char g_ch;
+char g_ch = '\0';
 unsigned int visible_width;  // accounting for how much of the current text mode row has been used
 unsigned int visible_height; // accounting for how many rows into the current text mode we've drawn on
 // If the thing we're printing (g_ch) is intended to physically displayed, pass 1 to indicate
@@ -295,7 +303,7 @@ void PRINT_OUT()
 
 	if (g_ch == KEY_ENTER)  // ENTER/RETURN
 	{
-		word_wrap_mode = TRUE;  // force off at end of line
+		word_wrap_mode = TRUE;  // force back on at end of line
 		++visible_height;  // account for how many text-mode rows have been used up (to know when to show the MENU)
 		is_new_line = TRUE;
 		goto auto_output;
@@ -304,12 +312,12 @@ void PRINT_OUT()
 	get_cursor_xy();
 	if (
 		(cursor_x == res_xM1)  // hit "edge" of the screen [res_x already includes right margin]
-		&& (word_wrap_mode == FALSE)
+		&& (word_wrap_mode == FALSE)  // if true, then don't look for a word wrap cut off (since we're not in word wrapping mode!)
 	)
 	{
 		if (is_visible(g_ch) == TRUE)   // no word wrap, just let visible stuff "go off the edge of the screen"
 		{
-			printf(">%c", 0x9D);  // cursor left
+			printf(">%c", 0x9D);  // cursor left to move onto the ">" symbol, so the X cursor position stays correct
 			return;
 		}
 		// else- non-printable characters do color change effects, so we want to be sure to capture the last one of
@@ -619,6 +627,7 @@ unsigned char handle_pause()  // "pause" aka "the menu" (intermission between fi
 	// TODO: need a smarter way to adjust color of the menu, since reversing it makes it look like a clickable link
 	// if we "force" a color, it could conflict with the current background color.
 
+	mouse_buttons = 0;
 	ch_result = 0;
 	do
 	{
@@ -638,6 +647,7 @@ unsigned char handle_pause()  // "pause" aka "the menu" (intermission between fi
 		{
 			ch_result = ' ';
 		}
+		mouse_buttons = 0;  //< to help avoid mouse button "stutter"
 
 		if (ch_result != 0) break;  // if a link was selected, it "virtually" presses space to proceed (to the linked location)
 
@@ -657,7 +667,7 @@ unsigned char handle_pause()  // "pause" aka "the menu" (intermission between fi
 	// clear all current links; going to "the next page" is sort of like a total restart,
 	// just we don't adjust the file pointer and just keep reading the file from where we're at.
 	// This way not a lot of RAM is needed to store up or buffer ahead and file content.  But will
-	// make searching for tags pretty inefficient.  Don't expect any huge .x16 files tho.
+	// make searching for tags pretty inefficient.  Don't expect any huge .nfo files tho.
 	link_data_idx = 0;  
 	tag_data_idx = 0;
 	visible_height = 0;
@@ -676,7 +686,37 @@ unsigned char handle_pause()  // "pause" aka "the menu" (intermission between fi
 	return MENU_CONTINUE;
 }
 
-char default_filename[60] = "index.x16\0";
+char default_filename[60] = "index.nfo\0";
+
+unsigned char g_in_ch[4];
+unsigned char freadch(unsigned char fn)
+{	
+	int n_bytes;
+	n_bytes = cbm_read(fn, g_in_ch, 1);
+	if (n_bytes == 1)
+	{
+		return g_in_ch[0];
+	}
+	g_eof = TRUE;
+	return 0xFF;
+}
+
+#define CBM_READ_BUFFER_LEN 20
+char cbm_read_buffer[CBM_READ_BUFFER_LEN];
+void do_some_read(unsigned char lfn)
+{	
+	int n_bytes;
+	n_bytes = cbm_read(lfn, cbm_read_buffer, CBM_READ_BUFFER_LEN);
+	// make sure there is a null terminator...
+	if (n_bytes < CBM_READ_BUFFER_LEN)
+	{
+		cbm_read_buffer[n_bytes] = '\0';
+	}
+	else
+	{
+		cbm_read_buffer[CBM_READ_BUFFER_LEN-1] = '\0';
+	}
+}
 
 void main(int argc, char** argv)
 {
@@ -685,7 +725,7 @@ void main(int argc, char** argv)
 	int in_ch;
 	int int_value;
 	char* chr_ptr;
-	FILE* f;
+	//FILE* f;
 
 	goto_tag_str[0] = '\0';  // set to not-doing-tag search
 
@@ -693,12 +733,12 @@ void main(int argc, char** argv)
 		(argc < 2)
 	)
 	{
-		argv[1] = default_filename;;  // default to the index.x16 file  [hopefully cc65 initialized argv sufficiently!]
-		//printf("xmanual <topic>.x16\n");
+		argv[1] = default_filename;;  // default to the index.nfo file  [hopefully cc65 initialized argv sufficiently!]
+		//printf("xmanual <topic>.nfo\n");
 		//exit(ERR_NO_ARG);
 	}
 
-	if (argc == 6)
+	if (argc >= 6)
 	{
 		// some filename must be specified in order to override these
 		margin_top = atoi(argv[2]);
@@ -706,13 +746,24 @@ void main(int argc, char** argv)
 		margin_left = atoi(argv[4]);
 		margin_right = atoi(argv[5]);
 	}
+	
+	if (argc >= 9)
+	{
+		n_fn = atoi(argv[6]);
+		n_device = atoi(argv[7]);
+		n_sec_addr = atoi(argv[8]);
+	}
 
-start_over:	
+start_over:
+
 	ENABLE_ISO_MODE;
 	get_screen_resolution();
 
-	f = fopen(argv[1], "r");
-	if (f == 0)
+	//f = fopen(argv[1], "r");
+	//if (f == 0)
+	g_eof = FALSE;
+	g_f = cbm_open(n_fn, n_device, n_sec_addr, argv[1]);
+	if (g_f != 0)
 	{
 		printf("not found [%s]\n", argv[1]);
 		exit(ERR_FILE_NOT_FOUND);
@@ -720,18 +771,35 @@ start_over:
 	file_idx = 0;	
 	arg1_ptr = argv[1];
 	
-	if (f)
+	
+	// already checked g_f earlier, no reason to check it again - assume file is successfuly opened by this point	
+	g_f = cbm_open(15, n_device, 15, "");  //< CBM convention, we have to check the channel 15 status or else subsequent reads might fail
+	if (g_f == 0)
+	{
+	  do_some_read(15);
+		cbm_close(15);  
+		if (strstr(cbm_read_buffer, "ok") == 0)
+		{
+			printf("file error [%s] [%s]\n", argv[1], cbm_read_buffer);
+		  exit(ERR_FILE_ISSUE);
+		}
+	}
+	cbm_close(15);  
+	// don't have to actually do anything with fn15/channel 15...
+	//cbm_close(15);
 	{
 		parsed_x = 0;
 		parsed_y = 1;
 
 		visible_width = margin_left;
 		visible_height = 0;
+		word_wrap_mode = TRUE;
 
 		while (TRUE)
 		{
-			in_ch = fgetc(f);  ++parsed_x;  ++file_idx;
-			if (feof(f))
+			in_ch = freadch(n_fn);
+			/*in_ch = fgetc(f);*/  ++parsed_x;  ++file_idx;
+			if (g_eof == TRUE) // (feof(f))
 			{
 				goto early_eof;
 			}
@@ -750,8 +818,9 @@ start_over:
 				// Skip any whitespace that happens to be after the token marker
 				while(TRUE)
 				{
-					in_ch = fgetc(f);  ++parsed_x;  ++file_idx;
-					if (feof(f))
+					in_ch = freadch(n_fn);
+					/*in_ch = fgetc(f);*/  ++parsed_x;  ++file_idx;
+					if (g_eof == TRUE)  // (feof(f))
 					{
 						goto early_eof;
 					}
@@ -775,8 +844,10 @@ start_over:
 					{
 						cmd_stack[cmd_stack_idx] = in_ch;
 						++cmd_stack_idx;
-						in_ch = fgetc(f);  ++parsed_x;  ++file_idx;
-						if (feof(f))
+						
+						in_ch = freadch(n_fn);
+						/*in_ch = fgetc(f);*/  ++parsed_x;  ++file_idx;
+						if (g_eof == TRUE) // (feof(f))
 						{
 							printf("eof before parsed end of command token (l%d, c%d)\n", parsed_y, parsed_x);
 							goto early_eof;
@@ -790,8 +861,9 @@ start_over:
 					{
 						while (TRUE)
 						{
-							in_ch = fgetc(f);  ++parsed_x;  ++file_idx;
-							if (feof(f))
+							in_ch = freadch(n_fn);
+							/*in_ch = fgetc(f);*/  ++parsed_x;  ++file_idx;
+							if (g_eof == TRUE)  // (feof(f))
 							{
 								printf("eof before parsed command token value (l%d, c%d)\n", parsed_y, parsed_x);
 								goto early_eof;
@@ -835,10 +907,10 @@ start_over:
 								g_ch = int_value;  VIRTUAL_OUT(0);
 								ASSESS_OUTPUT(TRUE);
 							}
-							else if (int_value == CMD_WRAP_TOGGLE)  // word wrap disable for this line
+							else if (int_value == CMD_WRAP_OFF)  // word wrap disable for this line
 							{
 								// non-printed control character
-								word_wrap_mode = !word_wrap_mode;
+								word_wrap_mode = FALSE;
 							}
 							else if (int_value == CMD_MENU)  // force menu
 							{
@@ -1006,7 +1078,8 @@ forced_menu:
 
 early_eof:
 		ASSESS_OUTPUT(TRUE);
-		fclose(f);
+		cbm_close(n_fn);
+		//fclose(f);
 
 		if (g_i3 == MENU_CONTINUE)  // handle a "natural pause" due to end of file
 		{
@@ -1028,6 +1101,5 @@ early_eof:
 		//printf("file closed\n");
 	}  // end if (f)
 	
-
 //	printf("end of line.\n");
 }
