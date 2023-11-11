@@ -1,0 +1,18 @@
+<XLI:INDEX.NFO,START> Start of Guide<CON:0D>
+<CON:0D>
+<CON:9C>C<CON:9A>om<CON:9F>ma<CON:99>nd<CON:9E>e<CON:1C>r<CON:05> X16 DOS (CMDR-DOS)<CON:0D>
+<CON:FE>
+<CON:FF>@$    or F7  List Directory Content<CON:0D>
+<CON:FF>@$=C         Show Current Directory<CON:0D>
+<CON:FF>@$=L         Long Directory Listing<CON:0D>
+<CON:0D>
+<CON:FF>@CD:FOLDER      Change Directory to FOLDER<CON:0D>
+<CON:FF>DOS"CD:FOLDER"  Change Directory to FOLDER<CON:0D>
+<CON:0D>
+<CON:FF>SAVE"FILE"    Save to FILE<CON:0D>
+<CON:FF>SAVE"@:FILE"  Overwrite FILE<CON:0D>
+<CON:0D>
+<XLI:CMDR-DOS/IEC-SUPPORT/INDEX.NFO,IEC> IEC support<CON:0D>
+<CON:0D>
+Press ESCAPE to exit this Info Guide.
+<CON:0D>
