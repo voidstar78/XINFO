@@ -72,7 +72,14 @@ Defines a target tag called "tag" to be used in TLINK commands.
 
 
 # Running XINFO
-XINFO was developed using cc65, a C-compiler for 6502-based systems.  As a convention, cc65 supports passing command line arguments using a REM statement when invoking the runtime of the program.  A typical load/run of XINFO looks like this:
+There are a few ways to use XINFO.
+
+#1) If you just load the XINFO.PRG and RUN, XINFO will use the following defaults:
+Use margins of 2 spaces on each side, file #1 of device #8, and look for INDEX.NFO in the current folder.   If INDEX.NFO is not found, the program exits back to BASIC.
+
+#2) On startup, XINFO will look for the word "XINFO0" starting at $0400 ("golden RAM").  If that sequence is found, then it is assumed this region of memory is being used to convey parameters to XINFO.  The XINFOCFG.PRG is included as a sample BASIC program that can be used to set the program configuration into this memory region.  That example can become part of an AUTOBOOT.X16.  Or adjust the configuration and run XINFOCFG.PRG before loading and running XINFO.PRG itself.   The adjustable parameters are the margin and expected file index/device to use.  Note that the initial/default filename of INDEX.NFO cannot be adjusted with this method.
+
+#3) XINFO was developed using cc65, a C-compiler for 6502-based systems.  As a convention, cc65 supports passing command line arguments using a REM statement when invoking the runtime of the program.   This method is the only way to deviate from starting up with INDEX.NFO.  A typical load/run of XINFO looks like this:
 
 Run XINFO with default margins on all sides set to 2:
 ```
@@ -80,19 +87,41 @@ LOAD "XINFO.PRG"
 RUN:REM EXAMPLE.NFO
 ```
 
-Run XINFO with no margins:
+Run XINFO with no margins:  (note that the RIGHT MARGIN must be at least 1)
 ```
 LOAD "XINFO.PRG"
-RUN:REM TUTORIAL.NFO 0 0 0 0
+RUN:REM TUTORIAL.NFO 0 0 0 1
 ```
 
-The margin arguments are in the order [top] [bottom] [left] [right].  For example, to run with top margin of 5 spaces, bottom margin of 4 spaces, left margin of 3 spaces, right margin of 2 spaces, run XINFO like this:
+The margin arguments are in the order [top] [bottom] [left] [right] [id] [device] [sub].  For example, to run with top margin of 5 spaces, bottom margin of 4 spaces, left margin of 3 spaces, right margin of 2 spaces, run XINFO like this:
 ```
 LOAD "XINFO.PRG"
 RUN:REM TUTORIAL.NFO 5 4 3 2
 ```
 
+To also configure to look for the startup file on a different device (in this example, file index 1 on device 9, using sub channel 6):
+```
+LOAD "XINFO.PRG"
+RUN:REM TUTORIAL.NFO 3 3 3 3 1 9 6
+```
+
 If no filename is specified, XINFO will look for **INDEX.NFO** by default
+
+# Error Reporting
+To keep the PRG as small as possible, printf is not being used within XINFO and there are no convenient "plain English" error messages.  Instead error codes are reported in the "XINFO configuration" memory region.  This only applies when using method #2 to run XINFO (where the program configuration is set starting at $0400).  The error code is the 14th offset from $0400, so at $040E.  Following this address at $040F and $0410 is 16-bit used to express the x/y location of the error in the original input file (in the case of parsing errors).
+
+The error codes are as follows (hex):
+0x01: input file parsing error: EOF (end of file) was encountered before the proper closing of a command token (control code portion)
+0x02: input file parsing error: EOF (end of file) was encountered before the proper closing of a command token (value portion)
+0x03: input file parsing error: XLINK command missing , to start the target definition
+0x04: input file parsing error: TLINK command missing , to start the target definition
+0x05: input file parsing error: control code not followed by a colon :
+0x06: input file parsing error: token symbol was found but not followed by alphabet character A-Z
+0x07: internal error, the buffered visible width has become wider than the available display.  This indicates a coding error related to some unusual word-wrap mishap.
+0x08: error OPENING the specified startup file (such as a device access error)
+0x09: error specified startup file is not OK (typically a file-not-found error for the specified startup file, which is INDEX.NFO by default)
+0x0A: right margin is less than 1 (i.e. 0).  Due to KERNAL issues related to wrapping at the physical edge of the screen in all the available text modes (and not-wrapping when wrap mode is off), the right side margin must be at least 1.
+
 
 
 # XINFO Usage
