@@ -7,7 +7,11 @@
 <CON:FF><XLI:BASIC/KW-BOOT.NFO,   BOOT>   Run AUTOBOOT.X16<CON:0D>
 <CON:FF><XLI:BASIC/KW-CLR.NFO,    CLR>    Clear BASIC Variables<CON:0D>
 <CON:FF><XLI:BASIC/KW-CLS.NFO,    CLS>    Clear the Screen<CON:0D>
+<CON:FF><XLI:BASIC/KW-COLOR.NFO,  COLOR>  Set the Colors<CON:0D>
 <CON:FF><XLI:BASIC/KW-CONT.NFO,   CONT>   Continue a Program<CON:0D>
+<CON:FF><XLI:BASIC/KW-DATA.NFO,   DATA>   Define Program Data<CON:0D>
+<CON:FF><XLI:BASIC/KW-DEF.NFO,    DEF>    Define Named Function<CON:0D>
+<CON:FF><XLI:BASIC/KW-DIM.NFO,    DIM>    Dimension and Array<CON:0D>
 TBD
 <CON:0D>
 <CON:0D>
