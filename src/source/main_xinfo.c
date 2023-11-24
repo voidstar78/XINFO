@@ -64,15 +64,19 @@ char ch_result;
 #define ERR_MARGIN_RIGHT -6
 
 #define KEY_ESC 27
+#define KEY_F1 133
+#define KEY_BACKSPACE 20
 #define KEY_ENTER 13
 #define KEY_TAB 9
 #define KEY_SHIFT_TAB 24
 #define KEY_UP 145
 #define KEY_DOWN 17
+#define KEY_BRACKET_LEFT 91
+#define KEY_BRACKET_RIGHT 93
 // ----------------------------------- special commands
 #define CMD_WRAP_OFF 0xFF
 #define CMD_LINE_SEPERATOR 0xFE  // aka DIVIDER
-#define CMD_MENU 0xFD  
+#define CMD_MENU 0xFD  // aka PAUSE
 // !!! remember to adjust is_visible if you add more special commands
 
 #define MAX_LINKS_PER_PAGE 30
@@ -156,7 +160,11 @@ Program_config* program_config_ptr;
 char goto_tag_str[40];  //< populated with search string of a tag link, change 0th element to \0 when done searching
 char* arg1_ptr;  //< override first "command line argument" with new filename when doing external links
 
+char orig_video_mode;
+char curr_video_mode;
+
 char word_wrap_mode;
+char file_still_open;
 
 char res_x;
 char res_y;
@@ -186,8 +194,8 @@ void get_cursor_xy()
 {
 	__asm__("sec");
 	__asm__("jsr $fff0");
-	__asm__("stx %v", cursor_y);  // set the ROW
-	__asm__("sty %v", cursor_x);  // set the COLUMN
+	__asm__("stx %v", cursor_y);  // store the ROW
+	__asm__("sty %v", cursor_x);  // store the COLUMN
 	
 	// The following is necessary only to address an issue with the DIVIDER line (0xFE)
 	// that is not followed by a newline.
@@ -263,6 +271,23 @@ NOTE: The above pre-allocated array start to eat up RAM quickly.
 We could consider putting them in different BANKS, just to learn how that's done from cc65?
 */
 
+char is_visible(char ch)  // i.e. is this character code visible when printed to the console? 
+{
+	char result = FALSE;  // assume no...
+	
+	if (
+		((ch >= 0x20) && (ch <= 0x7E))  
+		|| ((ch >= 0xA1) && (ch < 0xFD))  // FF = word wrap set, FE = divider line, FD = forced menu
+		// 0x7F considered as not visible in ISO
+		// 0xA0 considered as not visible in ISO
+	)
+	{
+		result = TRUE;
+	}
+	
+	return result;
+}
+
 char g_ch = '\0';
 char visible_width;  // accounting for how much of the current text mode row has been used
 char visible_height; // accounting for how many rows into the current text mode we've drawn on
@@ -274,11 +299,10 @@ char visible_height; // accounting for how many rows into the current text mode 
 void VIRTUAL_OUT(char visible)
 {
 	// handle special case of the very first output, to apply the top and left margin
-	if (
-	  (visible == 1)
-		&& (visible_width == program_config_ptr->margin_left)
-		&& (visible_height == 0)
-		&& (program_config_ptr->margin_top > 0)
+	if (	  
+		(visible_width == program_config_ptr->margin_left)  // we're on the left margin column
+		&& (visible_height == 0)  // we've cleared the screen or are somehow at the first row
+		&& (program_config_ptr->margin_top > 0)  // and some top margin has been specified...
 	)
 	{
 		// this will induce visible_height to match the margin_top
@@ -287,32 +311,27 @@ void VIRTUAL_OUT(char visible)
 			__asm__("lda #$0D");  // enter
 			__asm__("jsr $ffd2");
 			++visible_height;
-		}
+		}		
+		
 		for (g_i2 = 0; g_i2 < program_config_ptr->margin_left; ++g_i2)
 		{
 			__asm__("lda #$1D");  // cursor right, avoid overwriting by not using $20 SPACE
-			__asm__("jsr $ffd2");
+			__asm__("jsr $ffd2");			
 		}
+		
+		// need to "re-learn" was the prior visible width (sub-portion may have caused a word wrap)
+		for (g_i2 = 0; g_i2 < buffer_idx; ++g_i2)
+		{
+			if (is_visible(buffer[g_i2]))
+			{
+				++visible_width;
+			}
+		}		
 	}
 	
 	buffer[buffer_idx] = g_ch;
 	++buffer_idx;
 	visible_width += visible;
-}
-
-char is_visible(char ch)  // i.e. is this character code visible when printed to the console? 
-{
-	char result = FALSE;  // assume no...
-	
-	if (
-		((ch >= 0x20) && (ch <= 0x7F))
-		|| ((ch >= 0xA0) && (ch < 0xFD))  // FF = word wrap set, FE = divider line, FD = forced menu
-	)
-	{
-		result = TRUE;
-	}
-	
-	return result;
 }
 
 #define PRINT_OUT_RAW(d) \
@@ -389,7 +408,7 @@ void PRINT_OUT()
 		// else- non-printable characters do color change effects, so we want to be sure to capture the last one of
 		// those so when the text continues it is the expected color
 		goto auto_output;
-	}
+	}	
 
 	// of all the current links buffered up, search them to see if g_ch is a nonprintable code
 	// that corresponds to where we will output the link text.
@@ -426,7 +445,7 @@ auto_output:
 			__asm__("lda #$1D");  // cursor right, instead of $20 space
 			__asm__("jsr $ffd2");
 		}
-		skip_spaces_mode = TRUE;
+		skip_spaces_mode = TRUE;		
     // WARNING: visible_margin_left is not set despite the above moving to the right a few spaces
 	}
 }
@@ -679,28 +698,33 @@ just_show_tab_link:
 #define MENU_ESC 1
 #define MENU_TAG 2
 #define MENU_NEW_FILE 3
+#define MENU_SKIP 4
 char handle_pause()  // "pause" aka "the menu" (intermission between filled up screen pages)
-{
-	//char original_x;
-	//char original_y;
-	
-  // get the current x/y - we're going to draw the menu at the "bottom" (last row) of the screen
-  // then return back to this x/y when the menu is exited
-	//get_cursor_xy();
-	//original_x = cursor_x;
-	//original_y = cursor_y;
-	
+{	
   gotoxy(program_config_ptr->margin_left, res_yM1);  // go to "bottom" of the current row (minus margin)
-  PRINT_OUT_RAW(0x9C);
-  PRINT_OUT_RAW(0x01);
-  PRINT_OUT_RAW('[');
-  PRINT_OUT_RAW('m');
-  PRINT_OUT_RAW('e');
-  PRINT_OUT_RAW('n');
-  PRINT_OUT_RAW('u');
-  PRINT_OUT_RAW(']');
-  PRINT_OUT_RAW(0x01); 
-  PRINT_OUT_RAW(0x05); 
+  PRINT_OUT_RAW(0x9C);  // magenta/purple
+  PRINT_OUT_RAW(0x01);  // inverse
+	PRINT_OUT_RAW('[');
+	if (file_still_open == TRUE)
+	{				
+		PRINT_OUT_RAW('m');
+		PRINT_OUT_RAW('o');
+		PRINT_OUT_RAW('r');
+		PRINT_OUT_RAW('e');		
+	}
+  else
+	{		    
+    PRINT_OUT_RAW('s');
+    PRINT_OUT_RAW('t');
+    PRINT_OUT_RAW('o');
+    PRINT_OUT_RAW('p');    
+	}
+	PRINT_OUT_RAW(']');
+  PRINT_OUT_RAW(0x01);  // inverse
+  PRINT_OUT_RAW(0x05);  // white
+	// DEBUG
+	//gotoxy(program_config_ptr->margin_left, res_yM1);
+	//printf("%d", buffer_idx);
  
   //printf("%c%c[menu]%c%c", 0x9C, 1, 1, 5);  // %c used to output CHAR $01 which is interpreted to reverse fg/bg (9c = purple, 5=white)
   // TODO: need a smarter way to adjust color of the menu, since reversing it makes it look like a clickable link
@@ -719,15 +743,45 @@ char handle_pause()  // "pause" aka "the menu" (intermission between filled up s
 	{
 		GETCH;
 		
-		if (link_data_idx > 0)  // if  there is at least one link...
+		if (ch_result == KEY_BRACKET_LEFT)
+		{
+			if (curr_video_mode == 0)
+			{
+				curr_video_mode = 11;
+			}
+			else
+			{
+				--curr_video_mode;
+			}
+			__asm__("clc");
+			__asm__("sta %v", curr_video_mode);
+			__asm__("jsr $ff5f");  // set video mode
+		}
+		
+		else if (ch_result == KEY_BRACKET_RIGHT)
+		{
+			if (curr_video_mode == 11)
+			{
+				curr_video_mode = 0;
+			}
+			else
+			{
+				++curr_video_mode;
+			}
+			__asm__("clc");
+			__asm__("sta %v", curr_video_mode);
+			__asm__("jsr $ff5f");  // set video mode			
+		}		
+		
+		else if (link_data_idx > 0)  // if  there is at least one link...
 		{
 			if (ch_result == KEY_ENTER)
 			{
 				// go to the currently selected link
 				check_for_link_selected();
-			}
+			}			
 			
-			if (
+			else if (
 			  (ch_result == KEY_SHIFT_TAB)
 				|| (ch_result == KEY_UP)
 		  )
@@ -750,8 +804,8 @@ char handle_pause()  // "pause" aka "the menu" (intermission between filled up s
 				}
         goto init_tab_link;
 			}
-			
-			if (
+						
+			else if (
 				(ch_result == KEY_TAB)  // cycle to the next available link				
 				|| (ch_result == KEY_DOWN)
 			)
@@ -813,18 +867,25 @@ init_tab_link:
     PRINT_OUT_RAW('\n');
 		//printf("\n");
 		return MENU_ESC;
-	}
+	}	
 
 	CLRSCR;
 	// clear all current links; going to "the next page" is sort of like a total restart,
 	// just we don't adjust the file pointer and just keep reading the file from where we're at.
 	// This way not a lot of RAM is needed to store up or buffer ahead and file content.  But will
 	// make searching for tags pretty inefficient.  Don't expect any huge .nfo files tho.
-	link_data_idx = 0;  
-	//tag_data_idx = 0;
+	link_data_idx = 0; 	
 	visible_height = 0;
 	visible_width = program_config_ptr->margin_left;
-
+	
+  if (
+	  (ch_result == KEY_BRACKET_LEFT)
+	  || (ch_result == KEY_BRACKET_RIGHT)
+	)
+	{
+		buffer_idx = 0;
+		return MENU_SKIP;
+	}
 	if (goto_tag_str[0] != '\0')
 	{
 		return MENU_TAG;
@@ -958,39 +1019,18 @@ char hex2dec(char* value)
 void main(int argc, char** argv)
 {
 	char link_len;
-	//unsigned int file_idx;  // maybe useful when we get rid of printf; to show errors by file index rather than x/y location
 	char in_ch;
 	char byte_value;
 	char* chr_ptr;
 	//FILE* f;  // fopen doesn't support long filenames, using cbm_open instead
 	
-	/*
-	char a,b;
-	CLRSCR;
-	get_screen_resolution();
-	gotoxy(res_xM1, 0);
-	PRINT_OUT_RAW('a');
-	gotoxy(res_xM1, 1);
-	PRINT_OUT_RAW('>');  //< via CMDR-DOS, cursor moves to next line when writing at physical edge
-	get_cursor_xy(); 
-	a = cursor_x;
-	b = cursor_y;
-  PRINT_OUT_RAW(0x9D);
-	//PRINT_OUT_RAW('!');
-	//PRINT_OUT_RAW('x');
-	get_cursor_xy();
-	
-	//gotoxy(22,2);
-	//PRINT_OUT_RAW('y');
-	//gotoxy(2,2);
-	//PRINT_OUT_RAW('z');
-	
-	
-	gotoxy(0,10);
-	printf("%d / %d %d / %d %d\n", res_xM1, a, b, cursor_x, cursor_y);
-	exit(-5);
-*/
+	__asm__("sec");
+	__asm__("jsr $ff5f");  // get screen mode
+	__asm__("sta %v", orig_video_mode);
+	curr_video_mode = orig_video_mode;	
 
+  file_still_open = FALSE;
+	
   program_config_default.margin_top = 2;
   program_config_default.margin_bottom = 2;
   program_config_default.margin_left = 2;
@@ -1070,8 +1110,8 @@ start_over:
 		}
 	}
 	cbm_close(15);  
-	// don't have to actually do anything with fn15/channel 15...
-	//cbm_close(15);
+	// don't have to actually do anything with fn15/channel 15...	
+	file_still_open = TRUE;
 	{
 		program_config_ptr->parsed_x = 0;
 		program_config_ptr->parsed_y = 1;
@@ -1212,15 +1252,23 @@ start_over:
 							}
 							else if (byte_value == CMD_LINE_SEPERATOR)
 							{
-								g_i3 = (res_x - visible_width);
-								g_ch = '-';  
-								while (g_i3 > 0)
+								if (visible_width >= res_x)
 								{
-								  VIRTUAL_OUT(IS_VISIBLE);  ASSESS_OUTPUT(FALSE);
-									--g_i3;
+									// the line is already too long for any more divider content
 								}
-								g_ch = KEY_ENTER;
-								VIRTUAL_OUT(NOT_VISIBLE);  ASSESS_OUTPUT(TRUE);
+								else
+								{
+									g_i3 = (res_x - visible_width);
+									g_ch = '-';  
+									while (g_i3 > 0)
+									{ 
+										VIRTUAL_OUT(IS_VISIBLE);  ASSESS_OUTPUT(FALSE);
+										--g_i3;
+									}
+									word_wrap_mode = TRUE; 
+									g_ch = KEY_ENTER;
+									VIRTUAL_OUT(NOT_VISIBLE);  ASSESS_OUTPUT(TRUE);
+								}
 							}
 							else if (
 								(byte_value == 0x1C)  // red
@@ -1376,6 +1424,7 @@ forced_menu:
 early_eof:
 		ASSESS_OUTPUT(TRUE);
 		cbm_close(program_config_ptr->n_fn);
+		file_still_open = FALSE;
 		//fclose(f);
 
 		if (g_i3 == MENU_CONTINUE)  // handle a "natural pause" due to end of file
@@ -1383,12 +1432,17 @@ early_eof:
 			g_i3 = handle_pause();
 		}
 		if (g_i3 == MENU_ESC)
-		{
+		{			
 			// handle_pause already did a \n if they pressed ESCAPE
 			DISABLE_ISO_MODE;  //< what if they were in ISO mode themselves already?  and don't really want to clear the screen on exit, TBD...
+			
+			__asm__("clc");
+			__asm__("lda %v", orig_video_mode);
+			__asm__("jsr $ff5f");  // set original screen mode		
+			
 			exit(ERR_ESCAPE);
 		}
-		// else MENU_NEW_FILE or MENU_TAG...
+		// else MENU_NEW_FILE or MENU_TAG or MENU_SKIP...
 
 		// g_i3 == 2 would be to start tag mode, which we can start over
 		// or end of file was really reached, so automatically just start over
