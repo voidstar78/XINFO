@@ -165,10 +165,12 @@ char curr_video_mode;
 
 char word_wrap_mode;
 char file_still_open;
+char current_page;
 
 char res_x;
 char res_y;
 char res_x_actual;
+char res_y_actual;
 char res_x_actualM1;
 char res_xM1;
 char res_yM1;
@@ -179,6 +181,7 @@ void get_screen_resolution()
 	__asm__("sty %v", res_y);
 	
   res_x_actual = res_x;
+	res_y_actual = res_y;
   res_x_actualM1 = res_x - 1;
   
 	res_x -= program_config_ptr->margin_right;  // induce an artificial margin on the right side of the screen
@@ -186,6 +189,27 @@ void get_screen_resolution()
 
 	res_yM1 = res_y - 1;  // important since "last row" reserved for [menu]
 	res_xM1 = res_x - 1;
+}
+
+#define SET_SCREEN_MODE \
+	__asm__("clc"); \
+	__asm__("sta %v", curr_video_mode); \
+	__asm__("jsr $ff5f");
+
+char temp_x;
+char temp_y;
+void reset_mouse()
+{	
+  // turn off, calling mouse_config
+	__asm__("lda #$0");	
+	__asm__("ldx #$0");	
+	__asm__("ldx #$0");	
+	__asm__("jsr $FF68");
+	// turn back on
+	__asm__("lda #$1");
+  __asm__("ldx %v", res_x_actual);
+	__asm__("ldy %v", res_y_actual);	
+	__asm__("jsr $FF68");  // call mouse_config
 }
 
 char cursor_x;  // COLUMN (0-N)
@@ -336,6 +360,10 @@ void VIRTUAL_OUT(char visible)
 
 #define PRINT_OUT_RAW(d) \
   __asm__("lda #%s", d); \
+  __asm__("jsr $FFD2"); 
+
+#define PRINT_OUT_RAW_CHAR \
+  __asm__("lda %v", g_ch); \
   __asm__("jsr $FFD2"); 
 
 /*
@@ -636,10 +664,10 @@ void show_link_target()
 
 just_show_tab_link:
 				// show current link "path"
-				gotoxy(6+program_config_ptr->margin_left, res_yM1);  // move past "[menu]"
+				gotoxy(8+program_config_ptr->margin_left, res_yM1);  // move past "[menu]"
 				
 				//get_cursor_xy();
-				max_len = res_xM1 - (6+program_config_ptr->margin_left) - 2;  // - 2 is just so we don't write the link target reminder all the way to end of screen
+				max_len = res_xM1 - (8+program_config_ptr->margin_left) - 2;  // - 2 is just so we don't write the link target reminder all the way to end of screen
 				
 				desc_len = strlen(link_data[g_i].link_ref);
 				if (max_len > desc_len)
@@ -690,6 +718,40 @@ just_show_tab_link:
 	}
 }
 
+void WRITE_XX_DIGIT(char val)
+{	
+  char pad = 2;
+	char index = 0;
+	char multi = 10;	
+		
+	while (TRUE)
+	{
+		if (val < multi)
+			break;
+		++index;
+		multi *= 10;
+	}
+	
+	pad = pad-(index+1);
+	while (pad > 0)
+	{
+		PRINT_OUT_RAW(0x20);  // space   
+		--pad;
+	}
+
+	while (index > 0)
+	{		    
+		--index;
+		multi /= 10;
+		g_ch = 48 + (char)(val/multi);
+		PRINT_OUT_RAW_CHAR;
+		val %= multi;
+	}
+	
+	g_ch = 48 + val;
+	PRINT_OUT_RAW_CHAR;
+}
+
 // Return 0 for normal return 
 // Return 1 for ESC pressed (exit)
 // Return 2 for search for TAG mode enabled
@@ -701,6 +763,14 @@ just_show_tab_link:
 #define MENU_SKIP 4
 char handle_pause()  // "pause" aka "the menu" (intermission between filled up screen pages)
 {	
+  ++current_page;
+	if (current_page > 100)
+	{
+		current_page = 0;
+	}
+	gotoxy(program_config_ptr->margin_left+6, res_yM1);
+	WRITE_XX_DIGIT(current_page);
+	
   gotoxy(program_config_ptr->margin_left, res_yM1);  // go to "bottom" of the current row (minus margin)
   PRINT_OUT_RAW(0x9C);  // magenta/purple
   PRINT_OUT_RAW(0x01);  // inverse
@@ -753,9 +823,8 @@ char handle_pause()  // "pause" aka "the menu" (intermission between filled up s
 			{
 				--curr_video_mode;
 			}
-			__asm__("clc");
-			__asm__("sta %v", curr_video_mode);
-			__asm__("jsr $ff5f");  // set video mode
+			SET_SCREEN_MODE;
+			reset_mouse();
 		}
 		
 		else if (ch_result == KEY_BRACKET_RIGHT)
@@ -768,9 +837,8 @@ char handle_pause()  // "pause" aka "the menu" (intermission between filled up s
 			{
 				++curr_video_mode;
 			}
-			__asm__("clc");
-			__asm__("sta %v", curr_video_mode);
-			__asm__("jsr $ff5f");  // set video mode			
+			SET_SCREEN_MODE;			
+			reset_mouse();
 		}		
 		
 		else if (link_data_idx > 0)  // if  there is at least one link...
@@ -1081,6 +1149,8 @@ start_over:
 
 	ENABLE_ISO_MODE;
 	get_screen_resolution();
+	reset_mouse();
+	current_page = 0;
 
 	//f = fopen(argv[1], "r");
 	//if (f == 0)
