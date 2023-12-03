@@ -22,10 +22,15 @@ that with a standalone function.  sscanf otherwise is another big waste of code 
 #define TRUE  1
 #define FALSE 0
 
+#define NOT_INIT 255  // unsigned
+
 #define POKE(addr,val)     (*(char*) (addr) = (val))
 #define POKEW(addr,val)    (*(unsigned*) (addr) = (val))
 #define PEEK(addr)         (*(char*) (addr))
 #define PEEKW(addr)        (*(unsigned*) (addr))
+
+char g_iso_mode = FALSE;
+char g_center_mode = FALSE;
 
 #define CLRSCR \
   __asm__("lda #$93"); \
@@ -34,12 +39,14 @@ that with a standalone function.  sscanf otherwise is another big waste of code 
 // Enabling ISO mode also clears the screen
 #define ENABLE_ISO_MODE \
 	__asm__("lda #$0F"); \
-	__asm__("jsr $FFD2");
+	__asm__("jsr $FFD2"); \
+	g_iso_mode = TRUE;
 
 // "ending" ISO mode = returning to normal PETSCII mode
 #define DISABLE_ISO_MODE \
 	__asm__("lda #$8F"); \
-	__asm__("jsr $FFD2");
+	__asm__("jsr $FFD2"); \
+	g_iso_mode = FALSE;
 
 // NOTE: GETIN == $FFE4
 char ch_result;
@@ -63,6 +70,9 @@ char ch_result;
 #define ERR_FILE_ISSUE -5
 #define ERR_MARGIN_RIGHT -6
 
+#define KEY_T 84
+#define KEY_SHIFT_T 212
+#define KEY_HOME 19
 #define KEY_ESC 27
 #define KEY_F1 133
 #define KEY_BACKSPACE 20
@@ -73,10 +83,25 @@ char ch_result;
 #define KEY_DOWN 17
 #define KEY_BRACKET_LEFT 91
 #define KEY_BRACKET_RIGHT 93
+#define KEY_0 48
+#define KEY_1 49
+#define KEY_2 50
+#define KEY_3 51
+#define KEY_4 52
+#define KEY_5 53
+#define KEY_6 54
+#define KEY_7 55
+#define KEY_8 56
+#define KEY_9 57  
+#define KEY_MINUS 45   // or UNDERSCORE
+#define KEY_EQUAL 61   // or PLUS
+
 // ----------------------------------- special commands
 #define CMD_WRAP_OFF 0xFF
 #define CMD_LINE_SEPERATOR 0xFE  // aka DIVIDER
 #define CMD_MENU 0xFD  // aka PAUSE
+#define CMD_CENTER 0xFC
+#define HIGHEST_VISIBLE 0xFC  // set to match the value of prior line
 // !!! remember to adjust is_visible if you add more special commands
 
 #define MAX_LINKS_PER_PAGE 30
@@ -261,11 +286,10 @@ char value_stack[120];
 char value_stack_idx = 0;
 
 char g_i;		// general purpose loop counter
-char g_i2;		// general purpose loop counter
-char g_i3;		// general purpose loop counter
-
-char g_f;							// current file result (cbm_open result)
-char g_eof;						// global "end of file" indicator
+char g_i2;	// general purpose loop counter
+char g_i3;	// general purpose loop counter
+char g_f;		// current file result (cbm_open result)
+char g_eof;	// global "end of file" indicator
 
 // LT = link type
 #define LT_EXTERNAL 0
@@ -301,9 +325,11 @@ char is_visible(char ch)  // i.e. is this character code visible when printed to
 	
 	if (
 		((ch >= 0x20) && (ch <= 0x7E))  
-		|| ((ch >= 0xA1) && (ch < 0xFD))  // FF = word wrap set, FE = divider line, FD = forced menu
-		// 0x7F considered as not visible in ISO
-		// 0xA0 considered as not visible in ISO
+		|| ((ch >= 0xA1) && (ch < HIGHEST_VISIBLE))  
+		// FF = word wrap set, 
+		// FE = divider line, 
+		// FD = forced menu, 
+		// FC = center
 	)
 	{
 		result = TRUE;
@@ -445,10 +471,10 @@ void PRINT_OUT()
 		// Understand that this is pretty slow, since it happens for EACH printed output.  
 		// Yep, totally taking the 8MHz for granted here.  At 80x60 full wall of text, this 
 		// starts to get more apparent. Probably some smarter way to handle this.
-		// But, there probably aren't too links on the current page.
+		// But, there probably aren't too many links on the current page.
 		if (g_ch == link_code[g_i2])
 		{
-			get_cursor_xy();
+			get_cursor_xy();			
 			// store current cursor x/y, to help with link-clicking later
 			link_data[g_i2].cursor_x = cursor_x;
 			link_data[g_i2].cursor_y = cursor_y;
@@ -511,6 +537,32 @@ void ASSESS_OUTPUT(char force_remaining)
 
 	if (force_remaining || (visible_width >= res_xM1))  // time to output a line [note: visible_width already includes margin_left distance]
 	{
+		if (visible_width >= res_xM1)
+		{
+			// we have no chance of center -- if we are in centering mode, which we know we can't do, then also disable word wrap
+			if (g_center_mode) word_wrap_mode = FALSE;
+			g_center_mode = FALSE;  // ensure center mode is disabled
+		}
+		
+		if (		  
+		  force_remaining			
+			&& g_center_mode
+		)
+		{
+			//printf("%d %d\n", visible_width, res_xM1);
+			//exit(-12);
+			
+			// attempt to center the current line
+			tmp_idx = (res_x - visible_width) / 2;
+			while (tmp_idx)
+ 			{ 
+				g_ch = 0x1D;  // cursor right instead of spaces
+				PRINT_OUT_RAW_CHAR;
+				
+				--tmp_idx;
+			}
+			g_center_mode = FALSE;
+		}
 
 		g_i = buffer_idx;  // assume we need to output the entire current buffer
 		while (TRUE)
@@ -519,7 +571,7 @@ void ASSESS_OUTPUT(char force_remaining)
       {
         // the buffer is empty
         // this is a kludge; since g_i is signed char, 0 length would go to -1
-        g_i = 1;
+        g_i = 1;				
       }
 			--g_i;
 
@@ -531,30 +583,37 @@ void ASSESS_OUTPUT(char force_remaining)
 			{
 				// just print the entire buffer content as-is (even if there is a space at the front)
 				for (g_i = 0; g_i < buffer_idx; ++g_i)  // this is mainly for the "force_remaining" case
-				{
+				{					
 					g_ch = buffer[g_i]; PRINT_OUT();
-				}
-				get_cursor_xy();
-				if (cursor_x >= res_x)  // hit "edge" of the screen [res_x already includes right margin]
-				{  
-				  /* no longer permitting margin_right to be 0
-					if (program_config_ptr->margin_right == 0)
+					
+					// PRINT_OUT should normally handle this, but only during hard-ENTERs.
+					// This is to protect against the case of a very long line with no spaces, and word wrap is FALSE/OFF.
+					// This automatically wraps at the right side margin.
+					if (word_wrap_mode == TRUE)
 					{
-						// we get a "natural newline" by CMDR-DOS due to hitting the actual physical edge of the text mode screen
-						// that is, the cursor ends up the next line anyway without an actual CR.  Account for this manually...
-						++visible_height;
-						// manually apply the left margin
-						for (g_i2 = 0; g_i2 < program_config_ptr->margin_left; ++g_i2)
-						{
-							__asm__("lda #$1D");  // cursor right, instead of $20 space
-							__asm__("jsr $ffd2");
+						get_cursor_xy();
+						if (cursor_x >= res_xM1)  // hit "edge" of the screen [res_x already includes right margin]
+						{  
+							/* no longer permitting margin_right to be 0
+							if (program_config_ptr->margin_right == 0)
+							{
+								// we get a "natural newline" by CMDR-DOS due to hitting the actual physical edge of the text mode screen
+								// that is, the cursor ends up the next line anyway without an actual CR.  Account for this manually...
+								++visible_height;
+								// manually apply the left margin
+								for (g_i2 = 0; g_i2 < program_config_ptr->margin_left; ++g_i2)
+								{
+									__asm__("lda #$1D");  // cursor right, instead of $20 space
+									__asm__("jsr $ffd2");
+								}
+							}
+							else
+							*/
+							{
+								// induce a new line by hitting the right side margin
+								g_ch = KEY_ENTER; PRINT_OUT();
+							}
 						}
-					}
-					else
-					*/
-					{
-						// induce a new line by hitting the right side margin
-						g_ch = KEY_ENTER; PRINT_OUT();
 					}
 				}
 
@@ -571,7 +630,7 @@ void ASSESS_OUTPUT(char force_remaining)
 				
 				// output row from the beginning to that detected space position
 				for (g_i = 0; g_i < tmp_idx; ++g_i)
-				{
+				{					
 					g_ch = buffer[g_i]; PRINT_OUT();
 				}
 
@@ -653,7 +712,11 @@ void show_link_target()
 	
 	for (g_i = 0; g_i < link_data_idx; ++g_i)
 	{
-		if (mouse_y == link_data[g_i].cursor_y)
+		if (link_data[g_i].cursor_y == NOT_INIT)
+		{
+			// do nothing, this link wasn't actually initialized (probably off the screen in non-wordwrap mode
+		}
+		else if (mouse_y == link_data[g_i].cursor_y)
 		{
 			if (
 				(mouse_x >= link_data[g_i].cursor_x)
@@ -752,6 +815,77 @@ void WRITE_XX_DIGIT(char val)
 	PRINT_OUT_RAW_CHAR;
 }
 
+void show_help()
+{
+  // 80-columns worse case
+	char prefix[] = "                                                                                   \0";
+	char space_offset;
+	
+	//ENABLE_ISO_MODE;
+	// DISABLE ISO MODE WITHOUT CLEAR
+	g_ch = PEEK(0x0372) & 2;
+	POKE(0x0372, g_ch);
+	__asm__("lda #$02");  // Upper/Grx mode
+	__asm__("jsr $ff62");  // screen_set_charset								
+			
+    // since exciting help is going to re-read the file - in the case they are in
+	// ISO or "the other PETSCII mode" go ahead and ensure the desired mode now
+	// so the help content about to be shown appears correctly.					
+  g_ch = 0x0E;  PRINT_OUT_RAW_CHAR;
+                
+	// disable use of SHIFT+ALT
+	g_ch = 0x08;  PRINT_OUT_RAW_CHAR;  //VIRTUAL_OUT(NOT_VISIBLE);
+	
+	CLRSCR;
+	get_screen_resolution();
+  // pre-compute how many left-side alignment padding to use for each row of help
+  // (assumes the help is 22 columns wide, to accomodate down to 22x23 SCREEN 7)
+	space_offset = (res_x_actual - 22) / 2;
+	prefix[space_offset] = '\0';  // just snip off where the null terminate should go
+	
+  if (res_y_actual > 28)  // little help for CRTs so help isn't all the way at the top
+	{
+		printf("\n\n\n");
+	}
+
+	//      1234567890123456789012
+	printf("%sF1        HELP       \n", prefix);
+	printf("%s1-9,0,-,= CHANGE MODE\n", prefix);
+	printf("%s[ OR ]    CYCLE MODE \n", prefix);
+	printf("%sT OR HOME GOTO TOP   \n", prefix);
+	printf("%sTAB/DOWN  NEXT LINK  \n", prefix);
+	printf("%sSH+TAB/UP PREV. LINK \n", prefix);
+	printf("%sENTER     SELECT LINK\n", prefix);
+	printf("%sSPACE     NEXT PAGE  \n", prefix);
+	printf("%sESC       EXIT       \n", prefix);
+	printf("%s--[ CONTROL CODES ]--\n", prefix);
+	printf("%s<CON:FF>  WRAP OFF   \n", prefix);
+	printf("%s<CON:FE>  DIVIDER    \n", prefix);
+	printf("%s<CON:FD>  MENU       \n", prefix);
+	printf("%s<CON:FC>  CENTER     \n", prefix);	
+	printf("%s<CON:8E>  UPPER/GRX  \n", prefix);	
+	printf("%s<CON:0F>  ISO MODE   \n", prefix);
+	printf("%s<CON:0E>  LOWER/UPPER\n", prefix);
+	printf("%s<CON:0D>  NEW LINE   \n", prefix);	
+	printf("%s<CON:01>  INVERSE    \n", prefix); 
+	printf("%s---------------------\n", prefix);
+	printf("%sPRESS ANY KEY          ", prefix);
+	
+	while (TRUE)
+	{
+		GETCH;		
+		if (ch_result != 0)
+		{
+			break;
+		}
+		get_mouse_textmode();		
+		if (mouse_buttons != 0)  // any button pressed
+		{
+			break;
+		}
+	}	
+}
+
 // Return 0 for normal return 
 // Return 1 for ESC pressed (exit)
 // Return 2 for search for TAG mode enabled
@@ -763,6 +897,8 @@ void WRITE_XX_DIGIT(char val)
 #define MENU_SKIP 4
 char handle_pause()  // "pause" aka "the menu" (intermission between filled up screen pages)
 {	
+  char screen_mode_changed = 0;
+	
   ++current_page;
 	if (current_page > 100)
 	{
@@ -825,8 +961,20 @@ char handle_pause()  // "pause" aka "the menu" (intermission between filled up s
 			}
 			SET_SCREEN_MODE;
 			reset_mouse();
+			screen_mode_changed = 1;
 		}
-		
+		else if (ch_result == KEY_1) { curr_video_mode = 0; goto adjust_video; }
+		else if (ch_result == KEY_2) { curr_video_mode = 1; goto adjust_video; }
+		else if (ch_result == KEY_3) { curr_video_mode = 2; goto adjust_video; }
+		else if (ch_result == KEY_4) { curr_video_mode = 3; goto adjust_video; }
+		else if (ch_result == KEY_5) { curr_video_mode = 4; goto adjust_video; }
+		else if (ch_result == KEY_6) { curr_video_mode = 5; goto adjust_video; }
+		else if (ch_result == KEY_7) { curr_video_mode = 6; goto adjust_video; }
+		else if (ch_result == KEY_8) { curr_video_mode = 7; goto adjust_video; }
+		else if (ch_result == KEY_9) { curr_video_mode = 8; goto adjust_video; }
+		else if (ch_result == KEY_0) { curr_video_mode = 9; goto adjust_video; }
+		else if (ch_result == KEY_MINUS) { curr_video_mode = 10; goto adjust_video; }
+		else if (ch_result == KEY_EQUAL) { curr_video_mode = 11; goto adjust_video; }
 		else if (ch_result == KEY_BRACKET_RIGHT)
 		{
 			if (curr_video_mode == 11)
@@ -837,8 +985,10 @@ char handle_pause()  // "pause" aka "the menu" (intermission between filled up s
 			{
 				++curr_video_mode;
 			}
+adjust_video:			
 			SET_SCREEN_MODE;			
 			reset_mouse();
+			screen_mode_changed = 1;
 		}		
 		
 		else if (link_data_idx > 0)  // if  there is at least one link...
@@ -864,7 +1014,11 @@ char handle_pause()  // "pause" aka "the menu" (intermission between filled up s
         // decement to the prior tab link
 				if (curr_link_tab_idx == 0)
 				{
-					curr_link_tab_idx = link_data_idx-1;
+					do 
+					{
+					  curr_link_tab_idx = link_data_idx-1;
+					}	
+					while (link_data[curr_link_tab_idx].cursor_y == NOT_INIT);
 				}
 				else
 				{
@@ -874,7 +1028,7 @@ char handle_pause()  // "pause" aka "the menu" (intermission between filled up s
 			}
 						
 			else if (
-				(ch_result == KEY_TAB)  // cycle to the next available link				
+				(ch_result == KEY_TAB)  // cycle to the next available link							
 				|| (ch_result == KEY_DOWN)
 			)
 			{
@@ -886,7 +1040,10 @@ char handle_pause()  // "pause" aka "the menu" (intermission between filled up s
 				PRINT_OUT_RAW('>');
 
         // increment to the next tab link
-				++curr_link_tab_idx;
+				do
+				{
+				  ++curr_link_tab_idx;
+				} while (link_data[curr_link_tab_idx].cursor_y == NOT_INIT);
 				if (curr_link_tab_idx >= link_data_idx)
 				{
 					curr_link_tab_idx = 0;				
@@ -930,6 +1087,21 @@ init_tab_link:
 	//printf("\r      \r");  // only if not doing the clear screen
 	//gotoxy(program_config_ptr->margin_left, res_yM1);
 	
+	if (ch_result == KEY_F1)
+	{
+		show_help();		
+		new_file = TRUE;  // pretend we have new file, just to start over from the top
+	}
+	
+	else if (
+	  (ch_result == KEY_T)
+		|| (ch_result == KEY_SHIFT_T)
+		|| (ch_result == KEY_HOME)
+  )
+	{
+	  new_file = TRUE;  // pretend we have new file, just to start over from the top
+	}
+	
 	if (ch_result == KEY_ESC)
 	{
     PRINT_OUT_RAW('\n');
@@ -947,10 +1119,12 @@ init_tab_link:
 	visible_width = program_config_ptr->margin_left;
 	
   if (
-	  (ch_result == KEY_BRACKET_LEFT)
-	  || (ch_result == KEY_BRACKET_RIGHT)
+	  screen_mode_changed != 0
+	  //(ch_result == KEY_BRACKET_LEFT)
+	  //|| (ch_result == KEY_BRACKET_RIGHT)
 	)
 	{
+		screen_mode_changed = 0;
 		buffer_idx = 0;
 		return MENU_SKIP;
 	}
@@ -1088,7 +1262,7 @@ void main(int argc, char** argv)
 {
 	char link_len;
 	char in_ch;
-	char byte_value;
+	char byte_value;	
 	char* chr_ptr;
 	//FILE* f;  // fopen doesn't support long filenames, using cbm_open instead
 	
@@ -1165,7 +1339,6 @@ start_over:
 	//file_idx = 0;	
 	arg1_ptr = argv[1];
 	
-	
 	// already checked g_f earlier, no reason to check it again - assume file is successfuly opened by this point	
 	g_f = cbm_open(15, program_config_ptr->n_device, 15, "");  //< CBM convention, we have to check the channel 15 status or else subsequent reads might fail
 	if (g_f == 0)
@@ -1232,6 +1405,20 @@ start_over:
 				{
 					// double-token detected, print as-is
 					g_ch = '<';  VIRTUAL_OUT(IS_VISIBLE);  ASSESS_OUTPUT(FALSE);
+				}
+				else if (in_ch == '!')  // comments  <! like this >
+				{
+					do
+					{
+						in_ch = freadch(program_config_ptr->n_fn);
+						++program_config_ptr->parsed_x;
+						if (g_eof == TRUE) // (feof(f))
+						{
+              program_config_ptr->parse_error = 0x01;
+							goto early_eof;
+						}
+					}
+					while (in_ch != '>');
 				}
 				else if ((in_ch >= 'a') && (in_ch <= 'z'))
 				{
@@ -1310,8 +1497,11 @@ start_over:
 							{
 								// non-printed control character
 								word_wrap_mode = FALSE;
-								g_ch = byte_value;  VIRTUAL_OUT(NOT_VISIBLE);
-                //printf("wmf");
+								g_ch = byte_value;  VIRTUAL_OUT(NOT_VISIBLE);                
+							}
+							else if (byte_value == CMD_CENTER)
+							{
+								g_center_mode = TRUE;								
 							}
 							else if (byte_value == CMD_MENU)  // force menu
 							{
@@ -1328,17 +1518,69 @@ start_over:
 								}
 								else
 								{
-									g_i3 = (res_x - visible_width);
-									g_ch = '-';  
+									g_i3 = (res_x - visible_width)-1;
+									if (g_iso_mode)
+									{
+										g_ch = '-';
+									}
+									else
+									{
+									  g_ch = 0xF7;  //'-';  
+									}
 									while (g_i3 > 0)
 									{ 
 										VIRTUAL_OUT(IS_VISIBLE);  ASSESS_OUTPUT(FALSE);
 										--g_i3;
-									}
+									}									
 									word_wrap_mode = TRUE; 
 									g_ch = KEY_ENTER;
 									VIRTUAL_OUT(NOT_VISIBLE);  ASSESS_OUTPUT(TRUE);
 								}
+							}
+							else if (byte_value == 0x8E)  // Upper/Grx case PETSCII
+							{
+								//DISABLE_ISO_MODE;
+								// DISABLE ISO MODE WITHOUT CLEAR								
+								g_ch = PEEK(0x0372) & 0xBF;  // was just & 2
+								POKE(0x0372, g_ch);
+								__asm__("lda #$02");
+								__asm__("jsr $ff62");  // screen_set_charset								
+								
+								g_ch = 0x8E;  PRINT_OUT_RAW_CHAR;  // not sure if necessary
+								
+								goto enable_petscii;
+								
+							}
+							else if (byte_value == 0x0E)  // Lower/Upper case PETSCII
+							{
+								//DISABLE_ISO_MODE;
+								// DISABLE ISO MODE WITHOUT CLEAR
+								g_ch = PEEK(0x0372) & 0xBF;  // was just & 2
+								POKE(0x0372, g_ch);
+								__asm__("lda #$03");
+								__asm__("jsr $ff62");  // screen_set_charset								
+								
+								g_ch = 0x0E;  PRINT_OUT_RAW_CHAR;  // not sure if necessary
+								
+enable_petscii:								
+								g_ch = byte_value;  VIRTUAL_OUT(NOT_VISIBLE);
+								
+								// disable use of SHIFT+ALT
+								g_ch = 0x08;  VIRTUAL_OUT(NOT_VISIBLE);
+								
+								g_iso_mode = 0;
+							}
+							else if (byte_value == 0x0F)
+							{								
+								//ENABLE_ISO_MODE;
+								// To enter ISO without clearing the screen
+								g_ch = PEEK(0x0372) | 64;
+								POKE(0x0372, g_ch);
+								__asm__("lda #$01");
+								__asm__("jsr $ff62");  // screen_set_charset								
+								g_iso_mode = 1;
+								// POKE $0372,PEEK($0372)OR64:POKE $030C,1:SYS $FF62								
+								// POKE $0372,$82:POKE $030C,1:SYS $FF62								
 							}
 							else if (
 								(byte_value == 0x1C)  // red
@@ -1350,7 +1592,9 @@ start_over:
 								|| ((byte_value >= 0x95) && (byte_value <= 0x9C))   // brown .. purple
 								|| (byte_value == 0x9E)  // yellow
 								|| (byte_value == 0x9F)  // cyan
-								|| (byte_value == 0x01)  // REVERSE
+								|| (byte_value == 0x01)  // REVERSE																
+								//|| (byte_value == 0x0F)  // Enable ISO mode (will clear screen also) [handled above]
+								//|| (byte_value == 0x8F)  // Disable ISO mode (will clear screen also) [not supported, use the other codes to enter PETSCII explicitly
 							)
 							{
 								// color change but does not take screen space
@@ -1378,6 +1622,8 @@ start_over:
 
 							strcpy(link_data[link_data_idx].link_ref, value_stack);
 							link_data[link_data_idx].link_type = LT_EXTERNAL;  // XLINK (external)
+							link_data[link_data_idx].cursor_x = NOT_INIT;
+							link_data[link_data_idx].cursor_y = NOT_INIT;
 							
 							g_ch = link_code[link_data_idx];  VIRTUAL_OUT(NOT_VISIBLE);  // use a non-printable character as a marker for start of an external link							
 							link_len = 1;  // this becomes the LINK_LENGTH  
@@ -1396,8 +1642,15 @@ start_over:
 							}
 							g_ch = 0x01;  VIRTUAL_OUT(NOT_VISIBLE);  // swap colors
 							
-							link_data[link_data_idx].link_len = (link_len-1);
-							++link_data_idx;
+							if (visible_width >= (res_xM1))
+							{
+								// do nothing, forget about this link_data_idx addition
+							}
+							else
+							{
+							  link_data[link_data_idx].link_len = (link_len-1);
+							  ++link_data_idx;
+							}
 						}
 						else if ((strstr(cmd_stack, "tli") != 0) && (goto_tag_str[0] == '\0'))
 						{
@@ -1413,7 +1666,9 @@ start_over:
 
 							strcpy(link_data[link_data_idx].link_ref, value_stack);
 							link_data[link_data_idx].link_type = LT_TAG;
-							
+							link_data[link_data_idx].cursor_x = NOT_INIT;
+							link_data[link_data_idx].cursor_y = NOT_INIT;
+
               g_ch = link_code[link_data_idx];  VIRTUAL_OUT(NOT_VISIBLE);  // use a non-printable character as a marker for start of a tag link							
 							link_len = 1;  // this becomes the LINK_LENGTH  
 							g_ch = '>';
@@ -1426,13 +1681,14 @@ start_over:
 								{
 									break;
 								}
+								
 								g_ch = *chr_ptr;  VIRTUAL_OUT(IS_VISIBLE);  ASSESS_OUTPUT(FALSE);
 								++link_len;
 							}
 							g_ch = 0x01;  VIRTUAL_OUT(NOT_VISIBLE);  // swap colors
-							
+														
 							link_data[link_data_idx].link_len = (link_len-1);
-							++link_data_idx;
+							++link_data_idx;							
 						}
 						else if (strstr(cmd_stack, "tag") != 0)
 						{
@@ -1504,7 +1760,7 @@ early_eof:
 		if (g_i3 == MENU_ESC)
 		{			
 			// handle_pause already did a \n if they pressed ESCAPE
-			DISABLE_ISO_MODE;  //< what if they were in ISO mode themselves already?  and don't really want to clear the screen on exit, TBD...
+			DISABLE_ISO_MODE;
 			
 			__asm__("clc");
 			__asm__("lda %v", orig_video_mode);
