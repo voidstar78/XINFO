@@ -352,7 +352,7 @@ void VIRTUAL_OUT(char visible)
 	if (	  
 		(visible_width == program_config_ptr->margin_left)  // we're on the left margin column
 		&& (visible_height == 0)  // we've cleared the screen or are somehow at the first row
-		&& (program_config_ptr->margin_top > 0)  // and some top margin has been specified...
+		// && (program_config_ptr->margin_top > 0)  // and some top margin has been specified...
 	)
 	{
 		// this will induce visible_height to match the margin_top
@@ -683,13 +683,15 @@ void check_for_link_selected()
 		{
 			// enable search for tag mode
 			strcpy(goto_tag_str, link_data[g_i].link_ref);
+			buffer_idx = 0;
 			ch_result = ' ';  // induce pressing space to proceed from the pause/menu
 		}
 		else if (link_data[g_i].link_type == LT_EXTERNAL)
 		{
 			// override the first command line argument with this new relative or absolute path, and start all over
 			strcpy(arg1_ptr, link_data[g_i].link_ref);
-			new_file = TRUE;  // set flag that we're switching to a new file (note: didn't verify file exists yet)
+			buffer_idx = 0;
+			new_file = TRUE;  // set flag that we're switching to a new file (note: didn't verify file exists yet)			
 			ch_result = ' ';  // induce pressing space to proceed from the pause/menu
 		}
 		// else code bug - unsupported link type				
@@ -855,8 +857,8 @@ void show_help()
 	printf("%sT OR HOME GOTO TOP   \n", prefix);
 	printf("%sTAB/DOWN  NEXT LINK  \n", prefix);
 	printf("%sSH+TAB/UP PREV. LINK \n", prefix);
-	printf("%sENTER     SELECT LINK\n", prefix);
-	printf("%sSPACE     NEXT PAGE  \n", prefix);
+	printf("%sENTER/LMB SELECT LINK\n", prefix);
+	printf("%sSPACE/RMB NEXT PAGE  \n", prefix);
 	printf("%sESC       EXIT       \n", prefix);
 	printf("%s--[ CONTROL CODES ]--\n", prefix);
 	printf("%s<CON:FF>  WRAP OFF   \n", prefix);
@@ -900,7 +902,7 @@ char handle_pause()  // "pause" aka "the menu" (intermission between filled up s
   char screen_mode_changed = 0;
 	
   ++current_page;
-	if (current_page > 100)
+	if (current_page > 100)  // avoid showing 3-digits in the screen area set for page number indicator (only room for two-digits)
 	{
 		current_page = 0;
 	}
@@ -1116,8 +1118,7 @@ init_tab_link:
 	// make searching for tags pretty inefficient.  Don't expect any huge .nfo files tho.
 	link_data_idx = 0; 	
 	visible_height = 0;
-	visible_width = program_config_ptr->margin_left;
-	
+	visible_width = program_config_ptr->margin_left;	
   if (
 	  screen_mode_changed != 0
 	  //(ch_result == KEY_BRACKET_LEFT)
@@ -1762,9 +1763,12 @@ early_eof:
 			// handle_pause already did a \n if they pressed ESCAPE
 			DISABLE_ISO_MODE;
 			
+			g_ch = 0x09;  // enable SHIFT+ALT character swapping in case it got disabled
+			PRINT_OUT_RAW_CHAR;
+			
 			__asm__("clc");
 			__asm__("lda %v", orig_video_mode);
-			__asm__("jsr $ff5f");  // set original screen mode		
+			__asm__("jsr $ff5f");  // set original screen mode								
 			
 			exit(ERR_ESCAPE);
 		}
