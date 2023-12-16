@@ -24,6 +24,7 @@ Only a few codes are supported, mainly ENTER and FOREGROUND COLOR changes:
 FF = Disable word wrap mode for the current row (i.e. until code 0D is encountered, then word wrap is enabled back on)
 FE = Line Divider (dashes till end of current line) 
 FD = Force Menu (causes the MENU to appear where this control token appears; will be ignored when linking to a tag; intent is to help "pause" at major content and more politely navigate to tags)
+FC = Center current line (of the content up to the next newline); intended for short titles (can be used with CON:FF)
 
 05 = WHITE
 1C = RED
