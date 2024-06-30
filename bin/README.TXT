@@ -74,7 +74,7 @@ And to clarify, if you just do this:
 LOAD"XINFO.PRG"
 RUN
 
-That works also and XINFO will look for INDEX.X16 in the current folder and start with that.
+That works also and XINFO will look for INDEX.NFO in the current folder and start with that.
 
 
 
