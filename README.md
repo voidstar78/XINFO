@@ -112,16 +112,16 @@ If no filename is specified, XINFO will look for **INDEX.NFO** by default
 To keep the PRG as small as possible, printf is not being used within XINFO and there are no convenient "plain English" error messages.  Instead error codes are reported in the "XINFO configuration" memory region.  This only applies when using method #2 to run XINFO (where the program configuration is set starting at $0400).  The error code is the 14th offset from $0400, so at $040E.  Following this address at $040F and $0410 is 16-bit used to express the x/y location of the error in the original input file (in the case of parsing errors).
 
 The error codes are as follows (hex):
-0x01: input file parsing error: EOF (end of file) was encountered before the proper closing of a command token (control code portion)
-0x02: input file parsing error: EOF (end of file) was encountered before the proper closing of a command token (value portion)
-0x03: input file parsing error: XLINK command missing , to start the target definition
-0x04: input file parsing error: TLINK command missing , to start the target definition
-0x05: input file parsing error: control code not followed by a colon :
-0x06: input file parsing error: token symbol was found but not followed by alphabet character A-Z
-0x07: internal error, the buffered visible width has become wider than the available display.  This indicates a coding error related to some unusual word-wrap mishap.
-0x08: error OPENING the specified startup file (such as a device access error)
-0x09: error specified startup file is not OK (typically a file-not-found error for the specified startup file, which is INDEX.NFO by default)
-0x0A: right margin is less than 1 (i.e. 0).  Due to KERNAL issues related to wrapping at the physical edge of the screen in all the available text modes (and not-wrapping when wrap mode is off), the right side margin must be at least 1.
+- 0x01: input file parsing error: EOF (end of file) was encountered before the proper closing of a command token (control code portion)
+- 0x02: input file parsing error: EOF (end of file) was encountered before the proper closing of a command token (value portion)
+- 0x03: input file parsing error: XLINK command missing , to start the target definition
+- 0x04: input file parsing error: TLINK command missing , to start the target definition
+- 0x05: input file parsing error: control code not followed by a colon :
+- 0x06: input file parsing error: token symbol was found but not followed by alphabet character A-Z
+- 0x07: internal error, the buffered visible width has become wider than the available display.  This indicates a coding error related to some unusual word-wrap mishap.
+- 0x08: error OPENING the specified startup file (such as a device access error)
+- 0x09: error specified startup file is not OK (typically a file-not-found error for the specified startup file, which is INDEX.NFO by default)
+- 0x0A: right margin is less than 1 (i.e. 0).  Due to KERNAL issues related to wrapping at the physical edge of the screen in all the available text modes (and not-wrapping when wrap mode is off), the right side margin must be at least 1.
 
 
 
